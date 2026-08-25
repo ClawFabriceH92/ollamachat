@@ -207,6 +207,16 @@ fun SettingsScreen(
                 checked = state.contextCompactEnabled,
                 onChange = vm::onContextCompactEnabledChange,
             )
+            SwitchRow(
+                label = "Mode réfléchi (plus profond mais réponse plus lente)",
+                checked = state.thinkEnabled,
+                onChange = vm::onThinkEnabledChange,
+            )
+            Text(
+                text = "Désactivé par défaut : réponse immédiate (recommandé pour un chat fluide). À activer pour les questions complexes.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             HorizontalDivider()
             SectionTitle("Serveurs MCP (outils externes)")

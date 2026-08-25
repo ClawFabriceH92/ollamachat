@@ -120,9 +120,10 @@ class OllamaClient(
         options: Map<String, Any> = emptyMap(),
         keepAlive: String? = null,
         tools: List<ToolDef> = emptyList(),
+        think: Boolean? = null,
         onDelta: (String) -> Unit = {},
     ): ChatStreamResult = withContext(Dispatchers.IO) {
-        val payload = buildChatPayload(model, messages, options, keepAlive, tools, stream = true)
+        val payload = buildChatPayload(model, messages, options, keepAlive, tools, stream = true, think = think)
         val req = Request.Builder()
             .url("${normalizeBaseUrl(baseUrl)}/api/chat")
             .post(payload.toString().toRequestBody(JSON.toMediaType()))
@@ -194,9 +195,10 @@ class OllamaClient(
         options: Map<String, Any> = emptyMap(),
         keepAlive: String? = null,
         tools: List<ToolDef> = emptyList(),
+        think: Boolean? = null,
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
-            val payload = buildChatPayload(model, messages, options, keepAlive, tools, stream = false)
+            val payload = buildChatPayload(model, messages, options, keepAlive, tools, stream = false, think = think)
             val req = Request.Builder()
                 .url("${normalizeBaseUrl(baseUrl)}/api/chat")
                 .post(payload.toString().toRequestBody(JSON.toMediaType()))
@@ -222,9 +224,13 @@ class OllamaClient(
         keepAlive: String?,
         tools: List<ToolDef>,
         stream: Boolean,
+        think: Boolean? = null,
     ): JSONObject = JSONObject().apply {
         put("model", model)
         put("stream", stream)
+        // Qwen3-family models reason by default; think=false makes them answer
+        // immediately (much lower first-token latency).
+        think?.let { put("think", it) }
         val arr = JSONArray()
         messages.forEach { m ->
             arr.put(

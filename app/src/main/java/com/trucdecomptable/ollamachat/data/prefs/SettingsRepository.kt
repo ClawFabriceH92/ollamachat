@@ -38,6 +38,7 @@ class SettingsRepository(private val context: Context) {
         val BRAVE_API_KEY = stringPreferencesKey("brave_api_key")
         val MCP_SERVERS = stringPreferencesKey("mcp_servers")
         val CONTEXT_COMPACT_ENABLED = booleanPreferencesKey("context_compact_enabled")
+        val THINK_ENABLED = booleanPreferencesKey("think_enabled")
     }
 
     val defaults = Defaults()
@@ -59,6 +60,7 @@ class SettingsRepository(private val context: Context) {
         val lockOnBackground: Boolean = true
         val braveApiKey: String = ""
         val contextCompactEnabled: Boolean = true
+        val thinkEnabled: Boolean = false
     }
 
     // --- flows ---
@@ -90,6 +92,8 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.data.map { it[Keys.BRAVE_API_KEY] ?: defaults.braveApiKey }
     val contextCompactEnabled: Flow<Boolean> =
         context.dataStore.data.map { it[Keys.CONTEXT_COMPACT_ENABLED] ?: defaults.contextCompactEnabled }
+    val thinkEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[Keys.THINK_ENABLED] ?: defaults.thinkEnabled }
     val mcpServers: Flow<List<McpServer>> =
         context.dataStore.data.map { parseMcpServers(it[Keys.MCP_SERVERS]) }
     val lockConfig: Flow<LockConfig> =
@@ -120,6 +124,7 @@ class SettingsRepository(private val context: Context) {
             braveApiKey = p[Keys.BRAVE_API_KEY] ?: defaults.braveApiKey,
             contextCompactEnabled = p[Keys.CONTEXT_COMPACT_ENABLED] ?: defaults.contextCompactEnabled,
             mcpServers = parseMcpServers(p[Keys.MCP_SERVERS]),
+            thinkEnabled = p[Keys.THINK_ENABLED] ?: defaults.thinkEnabled,
         )
     }
 
@@ -142,6 +147,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setLockOnBackground(v: Boolean) = context.dataStore.edit { it[Keys.LOCK_ON_BACKGROUND] = v }
     suspend fun setBraveApiKey(v: String) = context.dataStore.edit { it[Keys.BRAVE_API_KEY] = v }
     suspend fun setContextCompactEnabled(v: Boolean) = context.dataStore.edit { it[Keys.CONTEXT_COMPACT_ENABLED] = v }
+    suspend fun setThinkEnabled(v: Boolean) = context.dataStore.edit { it[Keys.THINK_ENABLED] = v }
     suspend fun setMcpServers(servers: List<McpServer>) =
         context.dataStore.edit { it[Keys.MCP_SERVERS] = serializeMcpServers(servers) }
 }
@@ -205,4 +211,5 @@ data class SettingsSnapshot(
     val braveApiKey: String,
     val contextCompactEnabled: Boolean,
     val mcpServers: List<McpServer>,
+    val thinkEnabled: Boolean,
 )

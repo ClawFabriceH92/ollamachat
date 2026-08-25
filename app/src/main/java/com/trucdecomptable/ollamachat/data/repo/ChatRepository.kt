@@ -108,7 +108,8 @@ class ChatRepository(
                         }
                         append(
                             "\n\nTu peux utiliser les outils disponibles quand c'est utile (recherche web, lecture d'URL, météo, calcul). " +
-                                "Appelle l'outil, puis réponds avec le résultat."
+                                "Appelle l'outil, puis réponds avec le résultat. " +
+                                "Si l'utilisateur partage un fait durable (préférence, info personnelle), enregistre-le avec save_memory."
                         )
                     }
                     add(OllamaChatMessage(role = "system", content = sys))
@@ -131,6 +132,7 @@ class ChatRepository(
                     put("num_ctx", settings.numCtx.first())
                 }
                 val keepAlive = settings.keepAlive.first()
+                val think = settings.thinkEnabled.first()
 
                 // 3. Tool-calling loop.
                 val tools = loadTools()
@@ -144,6 +146,7 @@ class ChatRepository(
                         options = options,
                         keepAlive = keepAlive,
                         tools = tools,
+                        think = think,
                         onDelta = onDelta,
                     )
                     if (result.error != null) {
@@ -155,12 +158,24 @@ class ChatRepository(
                     val mcpServers = settings.mcpServers.first()
                     val toolMessages = mutableListOf<OllamaChatMessage>()
                     result.toolCalls.forEach { tc ->
-                        val output = if (mcpServers.any { tc.name.startsWith("${it.name}_") }) {
-                            val server = mcpServers.first { tc.name.startsWith("${it.name}_") }
-                            val toolName = tc.name.removePrefix("${server.name}_")
-                            executeMcpTool(server, toolName, tc.arguments)
-                        } else {
-                            ToolExecutor.execute(tc.name, tc.arguments, braveKey)
+                        val output = when {
+                            tc.name == "save_memory" -> {
+                                val content = org.json.JSONObject(tc.arguments).optString("content", "").trim()
+                                if (content.isNotEmpty()) {
+                                    db.memoryDao().insert(
+                                        com.trucdecomptable.ollamachat.data.db.Memory(content = content)
+                                    )
+                                    "Mémorisé ✅ : $content"
+                                } else {
+                                    "Contenu vide, rien mémorisé"
+                                }
+                            }
+                            mcpServers.any { tc.name.startsWith("${it.name}_") } -> {
+                                val server = mcpServers.first { tc.name.startsWith("${it.name}_") }
+                                val toolName = tc.name.removePrefix("${server.name}_")
+                                executeMcpTool(server, toolName, tc.arguments)
+                            }
+                            else -> ToolExecutor.execute(tc.name, tc.arguments, braveKey)
                         }
                         db.messageDao().insert(
                             Message(

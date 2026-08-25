@@ -40,6 +40,11 @@ object ToolExecutor {
             description = "Retourne la météo actuelle d'une ville (température, vent).",
             parametersJson = """{"type":"object","properties":{"city":{"type":"string","description":"Nom de la ville"}},"required":["city"]}""",
         ),
+        ToolDef(
+            name = "save_memory",
+            description = "Enregistre un fait durable dans la mémoire persistante (préférence, information personnelle, décision). Ces faits seront rappelés dans toutes les conversations.",
+            parametersJson = """{"type":"object","properties":{"content":{"type":"string","description":"Le fait à mémoriser, concis"}},"required":["content"]}""",
+        ),
     )
 
     suspend fun execute(name: String, argumentsJson: String, braveApiKey: String = ""): String =

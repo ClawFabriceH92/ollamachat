@@ -32,6 +32,7 @@ data class SettingsUiState(
     val braveApiKey: String = "",
     val contextCompactEnabled: Boolean = true,
     val mcpServers: List<McpServer> = emptyList(),
+    val thinkEnabled: Boolean = false,
     val models: List<ModelInfo> = emptyList(),
     val testing: Boolean = false,
     val testResult: String? = null,
@@ -78,6 +79,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             braveApiKey = snap.braveApiKey,
             contextCompactEnabled = snap.contextCompactEnabled,
             mcpServers = snap.mcpServers,
+            thinkEnabled = snap.thinkEnabled,
             models = tr.models,
             testing = tr.testing,
             testResult = tr.testResult,
@@ -153,6 +155,10 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 
     fun onContextCompactEnabledChange(v: Boolean) {
         viewModelScope.launch { settings.setContextCompactEnabled(v) }
+    }
+
+    fun onThinkEnabledChange(v: Boolean) {
+        viewModelScope.launch { settings.setThinkEnabled(v) }
     }
 
     fun addMcpServer(name: String, url: String) {
