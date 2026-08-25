@@ -153,13 +153,19 @@ class OllamaClient(
                         sb.append(chunk.content)
                         onDelta(chunk.content)
                     }
+                    // Tool calls arrive in the FIRST chunk (done=false) in
+                    // streaming mode — parse them on every line.
+                    try {
+                        JSONObject(line).optJSONObject("message")?.let { msg ->
+                            val calls = parseToolCalls(msg.optJSONArray("tool_calls"))
+                            if (calls.isNotEmpty()) toolCalls = calls
+                        }
+                    } catch (_: Exception) {
+                    }
                     if (chunk.done) {
-                        // Final chunk carries tool_calls + stats.
+                        // Final chunk carries the generation stats.
                         try {
                             val finalJson = JSONObject(line)
-                            finalJson.optJSONObject("message")?.let { msg ->
-                                toolCalls = parseToolCalls(msg.optJSONArray("tool_calls"))
-                            }
                             evalCount = if (finalJson.has("eval_count")) finalJson.getInt("eval_count") else null
                             evalDurationNs = if (finalJson.has("eval_duration")) finalJson.getLong("eval_duration") else null
                             promptEvalCount = if (finalJson.has("prompt_eval_count")) finalJson.getInt("prompt_eval_count") else null

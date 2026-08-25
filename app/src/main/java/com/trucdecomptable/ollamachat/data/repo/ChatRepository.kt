@@ -192,6 +192,11 @@ class ChatRepository(
 
                 // 4. Persist the final assistant answer with stats.
                 val final = result ?: ChatStreamResult("")
+                if (final.fullText.isBlank() && final.toolCalls.isEmpty()) {
+                    // Guard: never insert an invisible empty bubble.
+                    onResult(null, null, "Le modèle n'a pas produit de réponse")
+                    return@launch
+                }
                 val statsLine = final.statsLine()
                 db.messageDao().insert(
                     Message(

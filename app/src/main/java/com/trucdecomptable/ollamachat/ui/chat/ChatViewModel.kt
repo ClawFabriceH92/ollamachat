@@ -114,7 +114,10 @@ class ChatViewModel(
     fun send(text: String, images: List<String> = emptyList()) {
         val clean = text.trim()
         if (clean.isEmpty() && images.isEmpty()) return
-        if (repo.isSending) return
+        if (repo.isSending) {
+            transient.value = transient.value.copy(toast = "Réponse en cours — patiente un instant")
+            return
+        }
         transient.value = transient.value.copy(streamingText = "", error = null)
         repo.send(
             conversationId = conversationId,
