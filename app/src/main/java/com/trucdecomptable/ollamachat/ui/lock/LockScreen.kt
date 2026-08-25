@@ -136,7 +136,6 @@ fun LockScreen(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.Center,
-                    verticalArrangement = Arrangement.spacedBy(24.dp),
                 ) {
                     row.forEach { key ->
                         Box(modifier = Modifier.size(72.dp), contentAlignment = Alignment.Center) {

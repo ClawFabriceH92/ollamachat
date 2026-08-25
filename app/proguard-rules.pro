@@ -1,7 +1,7 @@
-# PDFBox
--dontwarn org.apache.pdfbox.**
+# PDFBox (com.tom_roush)
+-dontwarn com.tom_roush.**
 -dontwarn org.bouncycastle.**
--keep class org.apache.pdfbox.** { *; }
+-keep class com.tom_roush.** { *; }
 -keep class org.bouncycastle.** { *; }
 
 # OkHttp

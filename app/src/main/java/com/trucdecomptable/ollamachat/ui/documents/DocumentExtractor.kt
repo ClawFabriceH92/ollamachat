@@ -8,7 +8,7 @@ import java.util.zip.ZipInputStream
 /**
  * Extracts readable text from user-picked documents.
  *
- *  - text/*          -> raw text (UTF-8)
+ *  - fichier texte   -> raw text (UTF-8)
  *  - application/pdf -> PDFBox text layer
  *  - docx            -> word/document.xml paragraphs
  *  - images          -> bytes kept as-is (sent to vision models)
@@ -44,10 +44,10 @@ object DocumentExtractor {
 
     private fun extractPdf(context: Context, uri: Uri): String {
         return try {
-            org.apache.pdfbox.android.PDFBoxResourceLoader.init(context)
+            com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(context)
             val bytes = readBytes(context, uri)
-            org.apache.pdfbox.pdmodel.PDDocument.load(bytes).use { doc ->
-                org.apache.pdfbox.text.PDFTextStripper().getText(doc)
+            com.tom_roush.pdfbox.pdmodel.PDDocument.load(bytes).use { doc ->
+                com.tom_roush.pdfbox.text.PDFTextStripper().getText(doc)
                     .ifBlank { "⚠️ PDF sans texte extractible (document scanné ?)" }
             }
         } catch (e: Exception) {

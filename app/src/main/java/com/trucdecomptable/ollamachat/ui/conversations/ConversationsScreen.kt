@@ -1,5 +1,6 @@
 package com.trucdecomptable.ollamachat.ui.conversations
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -163,6 +164,7 @@ fun ConversationsScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ConversationRow(
     conv: Conversation,
@@ -208,5 +210,6 @@ private fun ConversationRow(
     }
 }
 
+@Composable
 private fun app(): OllamaChatApp =
     (androidx.compose.ui.platform.LocalContext.current.applicationContext as OllamaChatApp)

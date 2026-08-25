@@ -121,5 +121,6 @@ fun WelcomeScreen(
     }
 }
 
+@Composable
 private fun app(): com.trucdecomptable.ollamachat.OllamaChatApp =
     (androidx.compose.ui.platform.LocalContext.current.applicationContext as com.trucdecomptable.ollamachat.OllamaChatApp)

@@ -266,7 +266,7 @@ private fun SliderField(
         androidx.compose.material3.Slider(
             value = value.toFloat(),
             onValueChange = { onChange(it.toDouble()) },
-            valueRange = range.first.toFloat()..range.last.toFloat(),
+            valueRange = range.start.toFloat()..range.endInclusive.toFloat(),
         )
     }
 }
@@ -293,6 +293,7 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ThemeDropdown(selected: String, onSelect: (String) -> Unit) {
     val options = listOf("system" to "Système", "light" to "Clair", "dark" to "Sombre")
@@ -361,5 +362,6 @@ private fun PinChangeDialog(
     )
 }
 
+@Composable
 private fun app(): OllamaChatApp =
     (androidx.compose.ui.platform.LocalContext.current.applicationContext as OllamaChatApp)

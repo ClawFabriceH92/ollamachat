@@ -1,5 +1,6 @@
 package com.trucdecomptable.ollamachat.ui.chat
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -343,6 +344,7 @@ private fun ChatInputBar(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(message: Message, onCopy: () -> Unit) {
     val isUser = message.role == "user"
@@ -491,5 +493,6 @@ private fun ModelPickerDialog(
     )
 }
 
+@Composable
 private fun app(): OllamaChatApp =
     (androidx.compose.ui.platform.LocalContext.current.applicationContext as OllamaChatApp)

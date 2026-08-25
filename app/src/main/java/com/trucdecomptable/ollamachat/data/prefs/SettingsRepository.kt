@@ -90,6 +90,25 @@ class SettingsRepository(private val context: Context) {
             )
         }
 
+    /** One-shot snapshot of every persisted setting (single DataStore read). */
+    val snapshot: Flow<SettingsSnapshot> = context.dataStore.data.map { p ->
+        SettingsSnapshot(
+            baseUrl = p[Keys.BASE_URL] ?: defaults.baseUrl,
+            model = p[Keys.MODEL] ?: defaults.model,
+            temperature = p[Keys.TEMPERATURE] ?: defaults.temperature,
+            topP = p[Keys.TOP_P] ?: defaults.topP,
+            topK = p[Keys.TOP_K] ?: defaults.topK,
+            numPredict = p[Keys.NUM_PREDICT] ?: defaults.numPredict,
+            numCtx = p[Keys.NUM_CTX] ?: defaults.numCtx,
+            keepAlive = p[Keys.KEEP_ALIVE] ?: defaults.keepAlive,
+            streaming = p[Keys.STREAMING] ?: defaults.streaming,
+            defaultSystemPrompt = p[Keys.DEFAULT_SYSTEM_PROMPT] ?: defaults.defaultSystemPrompt,
+            theme = p[Keys.THEME] ?: defaults.theme,
+            lockEnabled = p[Keys.LOCK_ENABLED] ?: defaults.lockEnabled,
+            lockOnBackground = p[Keys.LOCK_ON_BACKGROUND] ?: defaults.lockOnBackground,
+        )
+    }
+
     suspend fun setBaseUrl(v: String) = context.dataStore.edit { it[Keys.BASE_URL] = v }
     suspend fun setModel(v: String) = context.dataStore.edit { it[Keys.MODEL] = v }
     suspend fun setTemperature(v: Double) = context.dataStore.edit { it[Keys.TEMPERATURE] = v }
@@ -113,5 +132,22 @@ class SettingsRepository(private val context: Context) {
 data class LockConfig(
     val enabled: Boolean,
     val pinHash: String,
+    val lockOnBackground: Boolean,
+)
+
+/** Full persisted settings snapshot (single DataStore read). */
+data class SettingsSnapshot(
+    val baseUrl: String,
+    val model: String,
+    val temperature: Double,
+    val topP: Double,
+    val topK: Int,
+    val numPredict: Int,
+    val numCtx: Int,
+    val keepAlive: String,
+    val streaming: Boolean,
+    val defaultSystemPrompt: String,
+    val theme: String,
+    val lockEnabled: Boolean,
     val lockOnBackground: Boolean,
 )

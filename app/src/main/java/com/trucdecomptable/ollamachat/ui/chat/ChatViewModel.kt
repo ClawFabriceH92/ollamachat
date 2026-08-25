@@ -30,6 +30,15 @@ data class ChatUiState(
     val toast: String? = null,
 )
 
+/** Transient (non-persisted) UI state merged with the Room flows. */
+private data class Transient(
+    val streamingText: String = "",
+    val error: String? = null,
+    val toast: String? = null,
+    val models: List<ModelInfo> = emptyList(),
+    val capabilities: ModelCapabilities? = null,
+)
+
 class ChatViewModel(
     private val conversationId: Long,
     private val container: AppContainer,
@@ -39,11 +48,7 @@ class ChatViewModel(
     private val db = container.database
     private val settings = container.settings
 
-    private val streamingText = MutableStateFlow("")
-    private val error = MutableStateFlow<String?>(null)
-    private val toast = MutableStateFlow<String?>(null)
-    private val models = MutableStateFlow<List<ModelInfo>>(emptyList())
-    private val capabilities = MutableStateFlow<ModelCapabilities?>(null)
+    private val transient = MutableStateFlow(Transient())
 
     private val conversation = db.conversationDao().observeById(conversationId)
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -51,30 +56,28 @@ class ChatViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     private val defaultModel = settings.model
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    private val convWithModel = combine(conversation, defaultModel) { c, m -> c to m }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null to "")
 
     val uiState: StateFlow<ChatUiState> = combine(
         messages,
-        streamingText,
+        transient,
         repo.isSendingFlow,
-        conversation,
-        models,
-        capabilities,
-        error,
-        toast,
-        defaultModel,
-    ) { msgs, stream, sending, conv, mods, caps, err, tst, defModel ->
+        convWithModel,
+    ) { msgs, tr, sending, pair ->
+        val (conv, defModel) = pair
         ChatUiState(
             messages = msgs,
-            streamingText = stream,
+            streamingText = tr.streamingText,
             isSending = sending,
             conversationTitle = conv?.title ?: "",
             systemPrompt = conv?.systemPrompt,
             conversationModel = conv?.model,
             defaultModel = defModel,
-            models = mods,
-            modelCapabilities = caps,
-            error = err,
-            toast = tst,
+            models = tr.models,
+            modelCapabilities = tr.capabilities,
+            error = tr.error,
+            toast = tr.toast,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ChatUiState())
 
@@ -90,7 +93,9 @@ class ChatViewModel(
         viewModelScope.launch {
             val url = settings.baseUrl.first()
             if (url.isBlank()) return@launch
-            container.ollamaClient.listModels(url).onSuccess { models.value = it }
+            container.ollamaClient.listModels(url).onSuccess { mods ->
+                transient.value = transient.value.copy(models = mods)
+            }
         }
     }
 
@@ -100,7 +105,7 @@ class ChatViewModel(
             val model = activeModel
             if (url.isBlank() || model.isBlank()) return@launch
             container.ollamaClient.modelCapabilities(url, model).onSuccess {
-                capabilities.value = it
+                transient.value = transient.value.copy(capabilities = it)
                 settings.setVisionDetected(it.vision)
             }
         }
@@ -110,17 +115,20 @@ class ChatViewModel(
         val clean = text.trim()
         if (clean.isEmpty() && images.isEmpty()) return
         if (repo.isSending) return
-        streamingText.value = ""
-        error.value = null
+        transient.value = transient.value.copy(streamingText = "", error = null)
         repo.send(
             conversationId = conversationId,
             content = clean,
             images = images,
-            onDelta = { streamingText.value += it },
+            onDelta = { delta ->
+                transient.value = transient.value.copy(streamingText = transient.value.streamingText + delta)
+            },
             onResult = { finalText, err ->
                 if (err != null) {
-                    error.value = err
-                    toast.value = "Erreur : $err"
+                    transient.value = transient.value.copy(
+                        error = err,
+                        toast = "Erreur : $err",
+                    )
                     if (!finalText.isNullOrBlank()) {
                         viewModelScope.launch {
                             db.messageDao().insert(
@@ -133,7 +141,7 @@ class ChatViewModel(
                         }
                     }
                 }
-                streamingText.value = ""
+                transient.value = transient.value.copy(streamingText = "")
             },
         )
     }
@@ -154,7 +162,7 @@ class ChatViewModel(
                         imageBase64 = extracted.imageBase64,
                     )
                 )
-                toast.value = "Image ajoutée — envoie ta question"
+                transient.value = transient.value.copy(toast = "Image ajoutée — envoie ta question")
             } else {
                 db.messageDao().insert(
                     Message(
@@ -163,13 +171,13 @@ class ChatViewModel(
                         content = "📄 Document « ${extracted.label} » :\n${extracted.text.orEmpty()}",
                     )
                 )
-                toast.value = "Document importé — pose ta question dessus"
+                transient.value = transient.value.copy(toast = "Document importé — pose ta question dessus")
             }
         }
     }
 
     fun consumeToast() {
-        toast.value = null
+        transient.value = transient.value.copy(toast = null)
     }
 
     fun renameConversation(title: String) {

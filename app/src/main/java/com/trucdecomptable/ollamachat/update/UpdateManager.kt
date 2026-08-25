@@ -81,7 +81,7 @@ object UpdateManager {
             .setContentText(text)
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
-        context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
             .notify(NOTIF_ID, builder.build())
     }
 

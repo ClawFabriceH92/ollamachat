@@ -35,55 +35,43 @@ data class SettingsUiState(
     val pinMessage: String? = null,
 )
 
+/** Transient (non-persisted) UI state merged into the settings snapshot. */
+private data class Transient(
+    val models: List<ModelInfo> = emptyList(),
+    val testing: Boolean = false,
+    val testResult: String? = null,
+    val testOk: Boolean? = null,
+    val pinMessage: String? = null,
+)
+
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 
     private val settings = container.settings
-    private val models = MutableStateFlow<List<ModelInfo>>(emptyList())
-    private val testing = MutableStateFlow(false)
-    private val testResult = MutableStateFlow<String?>(null)
-    private val testOk = MutableStateFlow<Boolean?>(null)
-    private val pinMessage = MutableStateFlow<String?>(null)
+    private val transient = MutableStateFlow(Transient())
 
     val uiState: StateFlow<SettingsUiState> = combine(
-        settings.baseUrl,
-        settings.model,
-        settings.temperature,
-        settings.topP,
-        settings.topK,
-        settings.numPredict,
-        settings.numCtx,
-        settings.keepAlive,
-        settings.streaming,
-        settings.defaultSystemPrompt,
-        settings.theme,
-        settings.lockEnabled,
-        settings.lockOnBackground,
-        models,
-        testing,
-        testResult,
-        testOk,
-        pinMessage,
-    ) { url, model, temp, topP, topK, np, ctx, ka, stream, prompt, theme, lock, lockBg,
-        mods, test, res, ok, pin ->
+        settings.snapshot,
+        transient,
+    ) { snap, tr ->
         SettingsUiState(
-            baseUrl = url,
-            model = model,
-            temperature = temp,
-            topP = topP,
-            topK = topK,
-            numPredict = np,
-            numCtx = ctx,
-            keepAlive = ka,
-            streaming = stream,
-            defaultSystemPrompt = prompt,
-            theme = theme,
-            lockEnabled = lock,
-            lockOnBackground = lockBg,
-            models = mods,
-            testing = test,
-            testResult = res,
-            testOk = ok,
-            pinMessage = pin,
+            baseUrl = snap.baseUrl,
+            model = snap.model,
+            temperature = snap.temperature,
+            topP = snap.topP,
+            topK = snap.topK,
+            numPredict = snap.numPredict,
+            numCtx = snap.numCtx,
+            keepAlive = snap.keepAlive,
+            streaming = snap.streaming,
+            defaultSystemPrompt = snap.defaultSystemPrompt,
+            theme = snap.theme,
+            lockEnabled = snap.lockEnabled,
+            lockOnBackground = snap.lockOnBackground,
+            models = tr.models,
+            testing = tr.testing,
+            testResult = tr.testResult,
+            testOk = tr.testOk,
+            pinMessage = tr.pinMessage,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
 
@@ -94,8 +82,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun onBaseUrlChange(v: String) {
-        testResult.value = null
-        testOk.value = null
+        transient.value = transient.value.copy(testResult = null, testOk = null)
         viewModelScope.launch { settings.setBaseUrl(v) }
     }
 
@@ -154,24 +141,26 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun testConnection() {
         val url = uiState.value.baseUrl.trim()
         if (url.isEmpty()) {
-            testResult.value = "Adresse vide"
-            testOk.value = false
+            transient.value = transient.value.copy(testResult = "Adresse vide", testOk = false)
             return
         }
         viewModelScope.launch {
-            testing.value = true
-            testResult.value = null
-            testOk.value = null
+            transient.value = transient.value.copy(testing = true, testResult = null, testOk = null)
             val result = container.ollamaClient.testConnection(url)
-            testing.value = false
             if (result.isSuccess) {
                 val models = container.ollamaClient.listModels(url).getOrNull().orEmpty()
-                this@SettingsViewModel.models.value = models
-                testResult.value = "Connexion OK — ${models.size} modèle(s) disponible(s)"
-                testOk.value = true
+                transient.value = transient.value.copy(
+                    testing = false,
+                    models = models,
+                    testResult = "Connexion OK — ${models.size} modèle(s) disponible(s)",
+                    testOk = true,
+                )
             } else {
-                testResult.value = "Échec : ${result.exceptionOrNull()?.message}"
-                testOk.value = false
+                transient.value = transient.value.copy(
+                    testing = false,
+                    testResult = "Échec : ${result.exceptionOrNull()?.message}",
+                    testOk = false,
+                )
             }
         }
     }
@@ -180,28 +169,30 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             val url = uiState.value.baseUrl
             if (url.isBlank()) return@launch
-            container.ollamaClient.listModels(url).onSuccess { models.value = it }
+            container.ollamaClient.listModels(url).onSuccess { models ->
+                transient.value = transient.value.copy(models = models)
+            }
         }
     }
 
     fun changePin(oldPin: String, newPin: String) {
         if (!PinUtils.isValidPin(newPin)) {
-            pinMessage.value = "Le nouveau PIN doit avoir 4 chiffres"
+            transient.value = transient.value.copy(pinMessage = "Le nouveau PIN doit avoir 4 chiffres")
             return
         }
         viewModelScope.launch {
             val currentHash = settings.pinHash.first()
             if (PinUtils.hash(oldPin) != currentHash) {
-                pinMessage.value = "Ancien PIN incorrect"
+                transient.value = transient.value.copy(pinMessage = "Ancien PIN incorrect")
                 return@launch
             }
             settings.setPinHash(PinUtils.hash(newPin))
-            pinMessage.value = "PIN modifié ✅"
+            transient.value = transient.value.copy(pinMessage = "PIN modifié ✅")
         }
     }
 
     fun consumePinMessage() {
-        pinMessage.value = null
+        transient.value = transient.value.copy(pinMessage = null)
     }
 
     class Factory(private val container: AppContainer) : ViewModelProvider.Factory {
