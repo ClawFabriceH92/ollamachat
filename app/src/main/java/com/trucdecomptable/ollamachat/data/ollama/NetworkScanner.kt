@@ -35,6 +35,15 @@ object NetworkScanner {
 
     private data class NetworkInfo(val ip: String, val prefixLength: Int, val ifaceName: String)
 
+    /** One shared client for all probes — creating hundreds of clients saturates sockets/threads. */
+    private val probeClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(1500, TimeUnit.MILLISECONDS)
+            .readTimeout(2000, TimeUnit.MILLISECONDS)
+            .callTimeout(3000, TimeUnit.MILLISECONDS)
+            .build()
+    }
+
     suspend fun scanForOllama(ports: List<Int> = listOf(11434, 11435)): ScanOutcome =
         withContext(Dispatchers.IO) {
             val networks = findLocalNetworks() + readRoutedNetworks()
@@ -59,13 +68,8 @@ object NetworkScanner {
 
     private fun probe(baseUrl: String): String? {
         return try {
-            val client = OkHttpClient.Builder()
-                .connectTimeout(1500, TimeUnit.MILLISECONDS)
-                .readTimeout(2000, TimeUnit.MILLISECONDS)
-                .callTimeout(3000, TimeUnit.MILLISECONDS)
-                .build()
             val req = Request.Builder().url("$baseUrl/api/version").get().build()
-            client.newCall(req).execute().use { resp ->
+            probeClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return null
                 val body = resp.body?.string() ?: return null
                 val version = org.json.JSONObject(body).optString("version", "")
