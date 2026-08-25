@@ -31,6 +31,9 @@ import com.trucdecomptable.ollamachat.ui.settings.SettingsViewModel
 /**
  * First-launch screen: ask for the Ollama server address, test it, pick a
  * model, then hand off to the conversations list.
+ *
+ * The model step is only shown AFTER a successful connection test — otherwise
+ * the user would be stuck on an empty model list.
  */
 @Composable
 fun WelcomeScreen(
@@ -39,8 +42,8 @@ fun WelcomeScreen(
 ) {
     val state by vm.uiState.collectAsState()
     var url by rememberSaveable { mutableStateOf(state.baseUrl) }
-    var showPicker by rememberSaveable { mutableStateOf(false) }
     var model by rememberSaveable { mutableStateOf("") }
+    val connected = state.testOk == true
 
     Column(
         modifier = Modifier
@@ -59,7 +62,8 @@ fun WelcomeScreen(
         )
         Spacer(Modifier.height(32.dp))
 
-        if (!showPicker) {
+        if (!connected) {
+            // --- Step 1: server address + connection test ---
             OutlinedTextField(
                 value = url,
                 onValueChange = { url = it },
@@ -73,7 +77,6 @@ fun WelcomeScreen(
                 onClick = {
                     vm.onBaseUrlChange(url.trim())
                     vm.testConnection()
-                    showPicker = true
                 },
                 enabled = url.isNotBlank() && !state.testing,
                 modifier = Modifier.fillMaxWidth(),
@@ -82,7 +85,7 @@ fun WelcomeScreen(
                     CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text("Tester la connexion")
+                Text(if (state.testing) "Test en cours…" else "Tester la connexion")
             }
             state.testResult?.let {
                 Spacer(Modifier.height(8.dp))
@@ -91,31 +94,49 @@ fun WelcomeScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = if (state.testOk == true) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
                 )
             }
         } else {
+            // --- Step 2: pick the default model ---
+            Text("Connexion OK ✅", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
             Text("Choisissez le modèle par défaut :", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(16.dp))
-            state.models.forEach { m ->
-                TextButton(onClick = { model = m.name }) {
-                    Text(
-                        m.name + if (m == state.models.firstOrNull { it.name == model }) "  ✓" else "",
-                        fontWeight = if (model == m.name) FontWeight.Bold else FontWeight.Normal,
-                    )
-                }
-            }
-            Spacer(Modifier.height(24.dp))
-            Button(
-                onClick = {
-                    vm.onModelChange(model)
+            if (state.models.isEmpty()) {
+                Text(
+                    "Aucun modèle installé sur le serveur — installez-en un (ex. qwen3.5:9b) puis réessayez.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = {
                     vm.onBaseUrlChange(url.trim())
-                    vm.onFirstLaunchDone()
-                    onDone()
-                },
-                enabled = model.isNotBlank(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Commencer à discuter")
+                    vm.testConnection()
+                }) { Text("Re-tester la connexion") }
+            } else {
+                state.models.forEach { m ->
+                    TextButton(onClick = { model = m.name }) {
+                        Text(
+                            m.name + if (m.name == model) "  ✓" else "",
+                            fontWeight = if (model == m.name) FontWeight.Bold else FontWeight.Normal,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+                Button(
+                    onClick = {
+                        vm.onModelChange(model)
+                        vm.onBaseUrlChange(url.trim())
+                        vm.onFirstLaunchDone()
+                        onDone()
+                    },
+                    enabled = model.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Commencer à discuter")
+                }
             }
         }
     }
