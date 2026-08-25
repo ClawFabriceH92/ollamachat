@@ -46,8 +46,8 @@ class SettingsRepository(private val context: Context) {
         val temperature: Double = 0.7
         val topP: Double = 0.9
         val topK: Int = 40
-        val numPredict: Int = 512
-        val numCtx: Int = 4096
+        val numPredict: Int = 4096
+        val numCtx: Int = 8192
         val keepAlive: String = "5m"
         val streaming: Boolean = true
         val defaultSystemPrompt: String =
