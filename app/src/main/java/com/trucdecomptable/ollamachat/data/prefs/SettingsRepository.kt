@@ -35,6 +35,7 @@ class SettingsRepository(private val context: Context) {
         val LOCK_ENABLED = booleanPreferencesKey("lock_enabled")
         val PIN_HASH = stringPreferencesKey("pin_hash")
         val LOCK_ON_BACKGROUND = booleanPreferencesKey("lock_on_background")
+        val BRAVE_API_KEY = stringPreferencesKey("brave_api_key")
     }
 
     val defaults = Defaults()
@@ -54,6 +55,7 @@ class SettingsRepository(private val context: Context) {
         val theme: String = "system"
         val lockEnabled: Boolean = false
         val lockOnBackground: Boolean = true
+        val braveApiKey: String = ""
     }
 
     // --- flows ---
@@ -81,6 +83,8 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.data.map { it[Keys.PIN_HASH] ?: PinUtils.hash("0000") }
     val lockOnBackground: Flow<Boolean> =
         context.dataStore.data.map { it[Keys.LOCK_ON_BACKGROUND] ?: defaults.lockOnBackground }
+    val braveApiKey: Flow<String> =
+        context.dataStore.data.map { it[Keys.BRAVE_API_KEY] ?: defaults.braveApiKey }
     val lockConfig: Flow<LockConfig> =
         context.dataStore.data.map { p ->
             LockConfig(
@@ -106,6 +110,7 @@ class SettingsRepository(private val context: Context) {
             theme = p[Keys.THEME] ?: defaults.theme,
             lockEnabled = p[Keys.LOCK_ENABLED] ?: defaults.lockEnabled,
             lockOnBackground = p[Keys.LOCK_ON_BACKGROUND] ?: defaults.lockOnBackground,
+            braveApiKey = p[Keys.BRAVE_API_KEY] ?: defaults.braveApiKey,
         )
     }
 
@@ -126,6 +131,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setLockEnabled(v: Boolean) = context.dataStore.edit { it[Keys.LOCK_ENABLED] = v }
     suspend fun setPinHash(v: String) = context.dataStore.edit { it[Keys.PIN_HASH] = v }
     suspend fun setLockOnBackground(v: Boolean) = context.dataStore.edit { it[Keys.LOCK_ON_BACKGROUND] = v }
+    suspend fun setBraveApiKey(v: String) = context.dataStore.edit { it[Keys.BRAVE_API_KEY] = v }
 }
 
 /** Snapshot of the lock settings (computed once, used by MainActivity). */
@@ -150,4 +156,5 @@ data class SettingsSnapshot(
     val theme: String,
     val lockEnabled: Boolean,
     val lockOnBackground: Boolean,
+    val braveApiKey: String,
 )

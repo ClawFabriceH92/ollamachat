@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -201,6 +202,12 @@ fun ChatScreen(
                     }
                 },
                 onCancel = { vm.cancel() },
+                onSearchWeb = {
+                    if (input.isNotBlank()) {
+                        vm.searchAndSend(input)
+                        input = ""
+                    }
+                },
                 onAttach = {
                     documentLauncher.launch(
                         arrayOf(
@@ -307,6 +314,7 @@ private fun ChatInputBar(
     isSending: Boolean,
     onSend: () -> Unit,
     onCancel: () -> Unit,
+    onSearchWeb: () -> Unit,
     onAttach: () -> Unit,
 ) {
     Row(
@@ -318,6 +326,9 @@ private fun ChatInputBar(
     ) {
         IconButton(onClick = onAttach) {
             Icon(Icons.Filled.AttachFile, contentDescription = "Importer un document")
+        }
+        IconButton(onClick = onSearchWeb, enabled = input.isNotBlank()) {
+            Icon(Icons.Filled.TravelExplore, contentDescription = "Rechercher sur le web")
         }
         OutlinedTextField(
             value = input,

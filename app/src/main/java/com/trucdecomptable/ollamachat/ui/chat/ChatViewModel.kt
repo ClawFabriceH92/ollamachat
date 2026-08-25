@@ -148,6 +148,39 @@ class ChatViewModel(
 
     fun cancel() = repo.cancel()
 
+    /**
+     * Searches the web for [query] (Brave if a key is set, Wikipedia otherwise),
+     * injects the results as a system message, then sends the question to the model.
+     */
+    fun searchAndSend(query: String) {
+        val clean = query.trim()
+        if (clean.isEmpty()) return
+        viewModelScope.launch {
+            transient.value = transient.value.copy(toast = "Recherche web en cours…")
+            val key = settings.braveApiKey.first()
+            val results = com.trucdecomptable.ollamachat.data.web.WebSearchClient.search(clean, key)
+                .getOrNull().orEmpty()
+            if (results.isEmpty()) {
+                transient.value = transient.value.copy(
+                    toast = "Recherche infructueuse — essayez une autre formulation",
+                )
+                return@launch
+            }
+            val contextText = results.mapIndexed { i, r ->
+                "${i + 1}. ${r.title} — ${r.url}\n   ${r.snippet}"
+            }.joinToString("\n\n")
+            db.messageDao().insert(
+                Message(
+                    conversationId = conversationId,
+                    role = "system",
+                    content = "Résultats de recherche web pour « $clean » :\n\n$contextText\n\nRéponds à la question en t'appuyant sur ces résultats.",
+                )
+            )
+            transient.value = transient.value.copy(toast = null)
+            send(clean)
+        }
+    }
+
     /** Extracts and stores an imported document (text -> system message, image -> user message). */
     fun importDocument(uri: android.net.Uri, mime: String, context: android.content.Context) {
         viewModelScope.launch {

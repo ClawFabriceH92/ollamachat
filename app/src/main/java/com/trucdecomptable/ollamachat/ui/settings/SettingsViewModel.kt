@@ -28,6 +28,7 @@ data class SettingsUiState(
     val theme: String = "system",
     val lockEnabled: Boolean = false,
     val lockOnBackground: Boolean = true,
+    val braveApiKey: String = "",
     val models: List<ModelInfo> = emptyList(),
     val testing: Boolean = false,
     val testResult: String? = null,
@@ -71,6 +72,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             theme = snap.theme,
             lockEnabled = snap.lockEnabled,
             lockOnBackground = snap.lockOnBackground,
+            braveApiKey = snap.braveApiKey,
             models = tr.models,
             testing = tr.testing,
             testResult = tr.testResult,
@@ -138,6 +140,10 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 
     fun onLockOnBackgroundChange(v: Boolean) {
         viewModelScope.launch { settings.setLockOnBackground(v) }
+    }
+
+    fun onBraveApiKeyChange(v: String) {
+        viewModelScope.launch { settings.setBraveApiKey(v) }
     }
 
     fun onFirstLaunchDone() {

@@ -154,6 +154,22 @@ fun SettingsScreen(
             )
 
             HorizontalDivider()
+            SectionTitle("Recherche web (pour répondre avec des infos à jour)")
+            OutlinedTextField(
+                value = state.braveApiKey,
+                onValueChange = vm::onBraveApiKeyChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Clé API Brave (optionnel)") },
+                placeholder = { Text("Sans clé : recherche Wikipedia seulement") },
+                singleLine = true,
+            )
+            Text(
+                text = "Clé gratuite sur api.search.brave.com (2000 req/mois). Le bouton 🔍 cherche sur le web et injecte les résultats au modèle.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            HorizontalDivider()
             SectionTitle("Génération")
 
             SliderField(
