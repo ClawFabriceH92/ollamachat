@@ -86,7 +86,7 @@ fun SettingsScreen(
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(
-                    onClick = { vm.testConnection() },
+                    onClick = { vm.testConnection(state.baseUrl) },
                     enabled = !state.testing,
                 ) {
                     if (state.testing) {

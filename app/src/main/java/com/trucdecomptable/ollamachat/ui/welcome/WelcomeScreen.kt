@@ -76,7 +76,7 @@ fun WelcomeScreen(
             Button(
                 onClick = {
                     vm.onBaseUrlChange(url.trim())
-                    vm.testConnection()
+                    vm.testConnection(url.trim())
                 },
                 enabled = url.isNotBlank() && !state.testing,
                 modifier = Modifier.fillMaxWidth(),
@@ -113,7 +113,7 @@ fun WelcomeScreen(
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = {
                     vm.onBaseUrlChange(url.trim())
-                    vm.testConnection()
+                    vm.testConnection(url.trim())
                 }) { Text("Re-tester la connexion") }
             } else {
                 state.models.forEach { m ->

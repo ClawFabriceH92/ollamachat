@@ -138,8 +138,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { settings.setFirstLaunchDone(true) }
     }
 
-    fun testConnection() {
-        val url = uiState.value.baseUrl.trim()
+    fun testConnection(urlFromField: String) {
+        val url = urlFromField.trim()
         if (url.isEmpty()) {
             transient.value = transient.value.copy(testResult = "Adresse vide", testOk = false)
             return
