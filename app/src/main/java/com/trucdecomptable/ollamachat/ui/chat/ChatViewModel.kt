@@ -181,6 +181,30 @@ class ChatViewModel(
         }
     }
 
+    /** Fetches a web page and injects its content as a system message. */
+    fun fetchUrl(rawUrl: String) {
+        val url = rawUrl.trim()
+        if (url.isEmpty()) return
+        viewModelScope.launch {
+            transient.value = transient.value.copy(toast = "Lecture de la page…")
+            val result = com.trucdecomptable.ollamachat.data.web.UrlFetcher.fetch(url)
+            result.onSuccess { content ->
+                db.messageDao().insert(
+                    Message(
+                        conversationId = conversationId,
+                        role = "system",
+                        content = content,
+                    )
+                )
+                transient.value = transient.value.copy(toast = "Page lue — pose ta question dessus")
+            }.onFailure { e ->
+                transient.value = transient.value.copy(
+                    toast = "Échec de lecture : ${e.message ?: "erreur inconnue"}",
+                )
+            }
+        }
+    }
+
     /** Extracts and stores an imported document (text -> system message, image -> user message). */
     fun importDocument(uri: android.net.Uri, mime: String, context: android.content.Context) {
         viewModelScope.launch {

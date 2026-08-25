@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
@@ -93,6 +94,7 @@ fun ChatScreen(
     var showSystemPromptDialog by remember { mutableStateOf(false) }
     var showModelDialog by remember { mutableStateOf(false) }
     var showConfirmDelete by remember { mutableStateOf(false) }
+    var showUrlDialog by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
@@ -166,6 +168,11 @@ fun ChatScreen(
                                 text = { Text("Changer de modèle…") },
                                 onClick = { showMenu = false; showModelDialog = true },
                                 leadingIcon = { Icon(Icons.Filled.Refresh, null) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Lire une page web…") },
+                                onClick = { showMenu = false; showUrlDialog = true },
+                                leadingIcon = { Icon(Icons.Filled.Language, null) },
                             )
                             DropdownMenuItem(
                                 text = { Text("Vider la conversation") },
@@ -285,6 +292,39 @@ fun ChatScreen(
                 showModelDialog = false
             },
             dismiss = { showModelDialog = false },
+        )
+    }
+
+    if (showUrlDialog) {
+        var url by rememberSaveable { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showUrlDialog = false },
+            title = { Text("Lire une page web") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text("URL") },
+                        placeholder = { Text("https://…") },
+                        singleLine = true,
+                    )
+                    Text(
+                        "Le contenu de la page sera ajouté à la conversation, puis tu poses ta question dessus.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showUrlDialog = false
+                    vm.fetchUrl(url)
+                }) { Text("Lire") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUrlDialog = false }) { Text("Annuler") }
+            },
         )
     }
 
