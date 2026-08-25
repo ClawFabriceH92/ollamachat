@@ -31,7 +31,7 @@ object NetworkScanner {
 
     suspend fun scanForOllama(ports: List<Int> = listOf(11434, 11435)): List<ScanResult> =
         withContext(Dispatchers.IO) {
-            val networks = findLocalNetworks()
+            val networks = findLocalNetworks() + readRoutedNetworks()
             if (networks.isEmpty()) return@withContext emptyList()
             val candidates = enumerateCandidates(networks)
             if (candidates.isEmpty()) return@withContext emptyList()
@@ -66,6 +66,44 @@ object NetworkScanner {
         } catch (_: Exception) {
             null
         }
+    }
+
+    /**
+     * Reads the kernel routing table (/proc/net/route) to find networks that
+     * are reachable by routing — typically the LAN behind a VPN tunnel, whose
+     * subnet does NOT match any local interface address (e.g. phone has a
+     * 10.8.0.x tunnel IP, server lives on 192.168.0.0/24 behind the tunnel).
+     */
+    private fun readRoutedNetworks(): List<NetworkInfo> {
+        val result = mutableListOf<NetworkInfo>()
+        try {
+            val lines = java.io.File("/proc/net/route").readLines()
+            for (line in lines.drop(1)) {
+                val parts = line.trim().split(Regex("\\s+"))
+                if (parts.size < 8) continue
+                val iface = parts[0]
+                val dest = hexToInt(parts[1]) ?: continue
+                val mask = hexToInt(parts[7]) ?: continue
+                if (dest == 0 || mask == 0) continue // default route or host route
+                val prefix = Integer.bitCount(mask)
+                if (prefix < 8 || prefix > 30) continue
+                val ip = intToIp(dest)
+                result.add(NetworkInfo(ip, prefix, iface.lowercase()))
+            }
+        } catch (_: Exception) {
+            // /proc/net/route unreadable — fall back to interfaces only.
+        }
+        return result
+    }
+
+    /** Parses a little-endian hex IPv4 (e.g. "0000A8C0" -> 0xC0A80000). */
+    private fun hexToInt(hex: String): Int? {
+        val v = hex.toLongOrNull(16) ?: return null
+        val result = ((v and 0xFFL) shl 24) or
+            (((v shr 8) and 0xFFL) shl 16) or
+            (((v shr 16) and 0xFFL) shl 8) or
+            ((v shr 24) and 0xFFL)
+        return result.toInt()
     }
 
     /** Collects every usable IPv4 interface; physical interfaces first, VPN tunnels last. */
