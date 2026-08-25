@@ -1,5 +1,6 @@
 package com.trucdecomptable.ollamachat.ui.settings
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -25,6 +27,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -84,6 +87,33 @@ fun SettingsScreen(
                 placeholder = { Text("http://192.168.1.50:11434") },
                 singleLine = true,
             )
+            OutlinedButton(
+                onClick = { vm.scanNetwork() },
+                enabled = !state.scanning && !state.testing,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (state.scanning) {
+                    CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Scan du réseau en cours…")
+                } else {
+                    Icon(Icons.Filled.Search, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Détecter automatiquement un serveur Ollama")
+                }
+            }
+            state.scanResults.forEach { result ->
+                Text(
+                    text = "🖥️ ${result.baseUrl}" + (result.version?.let { "  (v$it)" } ?: ""),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { vm.applyScanResult(result) }
+                        .padding(vertical = 6.dp),
+                )
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(
                     onClick = { vm.testConnection(state.baseUrl) },

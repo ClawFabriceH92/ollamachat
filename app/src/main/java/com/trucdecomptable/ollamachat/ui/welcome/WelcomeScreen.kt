@@ -1,5 +1,6 @@
 package com.trucdecomptable.ollamachat.ui.welcome
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -8,9 +9,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -26,14 +33,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.trucdecomptable.ollamachat.data.ollama.NetworkScanner
 import com.trucdecomptable.ollamachat.ui.settings.SettingsViewModel
 
 /**
- * First-launch screen: ask for the Ollama server address, test it, pick a
- * model, then hand off to the conversations list.
+ * First-launch screen: ask for the Ollama server address (manual or auto
+ * discovery), test it, pick a model, then hand off to the conversations list.
  *
  * The model step is only shown AFTER a successful connection test — otherwise
- * the user would be stuck on an empty model list.
+ * the user would be stuck on an empty model list. The whole screen scrolls so
+ * long model lists never push the confirm button off screen.
  */
 @Composable
 fun WelcomeScreen(
@@ -48,10 +57,11 @@ fun WelcomeScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
     ) {
+        Spacer(Modifier.height(24.dp))
         Text("OllamaChat", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Text(
@@ -63,7 +73,7 @@ fun WelcomeScreen(
         Spacer(Modifier.height(32.dp))
 
         if (!connected) {
-            // --- Step 1: server address + connection test ---
+            // --- Step 1: server address (manual or auto) + connection test ---
             OutlinedTextField(
                 value = url,
                 onValueChange = { url = it },
@@ -72,6 +82,41 @@ fun WelcomeScreen(
                 placeholder = { Text("http://192.168.1.50:11434") },
                 singleLine = true,
             )
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(
+                onClick = { vm.scanNetwork() },
+                enabled = !state.scanning && !state.testing,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (state.scanning) {
+                    CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Scan du réseau en cours…")
+                } else {
+                    Icon(Icons.Filled.Search, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Détecter automatiquement un serveur Ollama")
+                }
+            }
+
+            // Scan results (tap to select)
+            state.scanResults.forEach { result ->
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "🖥️ ${result.baseUrl}" + (result.version?.let { "  (v$it)" } ?: ""),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            url = result.baseUrl
+                            vm.applyScanResult(result)
+                        }
+                        .padding(vertical = 6.dp),
+                )
+            }
+
             Spacer(Modifier.height(16.dp))
             Button(
                 onClick = {
@@ -139,6 +184,7 @@ fun WelcomeScreen(
                 }
             }
         }
+        Spacer(Modifier.height(32.dp))
     }
 }
 

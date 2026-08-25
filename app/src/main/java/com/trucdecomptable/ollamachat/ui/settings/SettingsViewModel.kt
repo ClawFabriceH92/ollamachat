@@ -33,6 +33,8 @@ data class SettingsUiState(
     val testResult: String? = null,
     val testOk: Boolean? = null,
     val pinMessage: String? = null,
+    val scanning: Boolean = false,
+    val scanResults: List<com.trucdecomptable.ollamachat.data.ollama.NetworkScanner.ScanResult> = emptyList(),
 )
 
 /** Transient (non-persisted) UI state merged into the settings snapshot. */
@@ -42,6 +44,8 @@ private data class Transient(
     val testResult: String? = null,
     val testOk: Boolean? = null,
     val pinMessage: String? = null,
+    val scanning: Boolean = false,
+    val scanResults: List<com.trucdecomptable.ollamachat.data.ollama.NetworkScanner.ScanResult> = emptyList(),
 )
 
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
@@ -72,6 +76,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             testResult = tr.testResult,
             testOk = tr.testOk,
             pinMessage = tr.pinMessage,
+            scanning = tr.scanning,
+            scanResults = tr.scanResults,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
 
@@ -163,6 +169,28 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                 )
             }
         }
+    }
+
+    /** Scans the local network for Ollama servers and stores the results. */
+    fun scanNetwork() {
+        if (transient.value.scanning) return
+        viewModelScope.launch {
+            transient.value = transient.value.copy(scanning = true, scanResults = emptyList(), testResult = null, testOk = null)
+            val results = com.trucdecomptable.ollamachat.data.ollama.NetworkScanner.scanForOllama()
+            transient.value = transient.value.copy(
+                scanning = false,
+                scanResults = results,
+                testResult = if (results.isEmpty()) "Aucun serveur Ollama trouvé sur le réseau"
+                else "${results.size} serveur(s) trouvé(s) — touchez pour sélectionner",
+                testOk = null,
+            )
+        }
+    }
+
+    /** Applies a scan result: saves the URL and runs the connection test. */
+    fun applyScanResult(result: com.trucdecomptable.ollamachat.data.ollama.NetworkScanner.ScanResult) {
+        viewModelScope.launch { settings.setBaseUrl(result.baseUrl) }
+        testConnection(result.baseUrl)
     }
 
     fun refreshModels() {
