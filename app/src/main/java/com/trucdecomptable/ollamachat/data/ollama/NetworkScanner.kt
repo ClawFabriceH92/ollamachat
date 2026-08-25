@@ -24,18 +24,25 @@ object NetworkScanner {
 
     data class ScanResult(val baseUrl: String, val version: String?)
 
+    /** Scan outcome: found servers + a human-readable summary of scanned subnets. */
+    data class ScanOutcome(
+        val results: List<ScanResult>,
+        val scannedSubnets: List<String>,
+    )
+
     private const val MAX_ADDRESSES = 640
     private const val CONCURRENCY = 32
 
     private data class NetworkInfo(val ip: String, val prefixLength: Int, val ifaceName: String)
 
-    suspend fun scanForOllama(ports: List<Int> = listOf(11434, 11435)): List<ScanResult> =
+    suspend fun scanForOllama(ports: List<Int> = listOf(11434, 11435)): ScanOutcome =
         withContext(Dispatchers.IO) {
             val networks = findLocalNetworks() + readRoutedNetworks()
-            if (networks.isEmpty()) return@withContext emptyList()
+            if (networks.isEmpty()) return@withContext ScanOutcome(emptyList(), emptyList())
             val candidates = enumerateCandidates(networks)
-            if (candidates.isEmpty()) return@withContext emptyList()
-            coroutineScope {
+            val subnetSummary = networks.map { "${it.ip}/${it.prefixLength}" }.distinct()
+            if (candidates.isEmpty()) return@withContext ScanOutcome(emptyList(), subnetSummary)
+            val results = coroutineScope {
                 candidates.map { ip ->
                     async {
                         ports.forEach { port ->
@@ -47,14 +54,15 @@ object NetworkScanner {
                     }
                 }.awaitAll().filterNotNull()
             }
+            ScanOutcome(results, subnetSummary)
         }
 
     private fun probe(baseUrl: String): String? {
         return try {
             val client = OkHttpClient.Builder()
-                .connectTimeout(600, TimeUnit.MILLISECONDS)
-                .readTimeout(600, TimeUnit.MILLISECONDS)
-                .callTimeout(900, TimeUnit.MILLISECONDS)
+                .connectTimeout(1500, TimeUnit.MILLISECONDS)
+                .readTimeout(2000, TimeUnit.MILLISECONDS)
+                .callTimeout(3000, TimeUnit.MILLISECONDS)
                 .build()
             val req = Request.Builder().url("$baseUrl/api/version").get().build()
             client.newCall(req).execute().use { resp ->
@@ -96,8 +104,8 @@ object NetworkScanner {
         return result
     }
 
-    /** Parses a little-endian hex IPv4 (e.g. "0000A8C0" -> 0xC0A80000). */
-    private fun hexToInt(hex: String): Int? {
+    /** Parses a little-endian hex IPv4 (e.g. "0000A8C0" -> 0xC0A80000). Visible for tests. */
+    internal fun hexToInt(hex: String): Int? {
         val v = hex.toLongOrNull(16) ?: return null
         val result = ((v and 0xFFL) shl 24) or
             (((v shr 8) and 0xFFL) shl 16) or

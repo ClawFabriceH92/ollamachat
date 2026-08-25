@@ -176,12 +176,20 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         if (transient.value.scanning) return
         viewModelScope.launch {
             transient.value = transient.value.copy(scanning = true, scanResults = emptyList(), testResult = null, testOk = null)
-            val results = com.trucdecomptable.ollamachat.data.ollama.NetworkScanner.scanForOllama()
+            val outcome = com.trucdecomptable.ollamachat.data.ollama.NetworkScanner.scanForOllama()
+            val subnets = outcome.scannedSubnets.joinToString(", ")
+            val message = when {
+                outcome.results.isNotEmpty() ->
+                    "${outcome.results.size} serveur(s) trouvé(s) — touchez pour sélectionner"
+                subnets.isEmpty() ->
+                    "Aucune interface réseau détectée — vérifie le WiFi / VPN"
+                else ->
+                    "Aucun serveur trouvé sur ${subnets} — essayez l'adresse manuelle"
+            }
             transient.value = transient.value.copy(
                 scanning = false,
-                scanResults = results,
-                testResult = if (results.isEmpty()) "Aucun serveur Ollama trouvé sur le réseau"
-                else "${results.size} serveur(s) trouvé(s) — touchez pour sélectionner",
+                scanResults = outcome.results,
+                testResult = message,
                 testOk = null,
             )
         }
