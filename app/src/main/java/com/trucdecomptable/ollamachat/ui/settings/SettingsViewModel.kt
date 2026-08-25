@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.trucdecomptable.ollamachat.AppContainer
 import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
+import com.trucdecomptable.ollamachat.data.prefs.McpServer
 import com.trucdecomptable.ollamachat.util.PinUtils
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,6 +30,8 @@ data class SettingsUiState(
     val lockEnabled: Boolean = false,
     val lockOnBackground: Boolean = true,
     val braveApiKey: String = "",
+    val contextCompactEnabled: Boolean = true,
+    val mcpServers: List<McpServer> = emptyList(),
     val models: List<ModelInfo> = emptyList(),
     val testing: Boolean = false,
     val testResult: String? = null,
@@ -73,6 +76,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             lockEnabled = snap.lockEnabled,
             lockOnBackground = snap.lockOnBackground,
             braveApiKey = snap.braveApiKey,
+            contextCompactEnabled = snap.contextCompactEnabled,
+            mcpServers = snap.mcpServers,
             models = tr.models,
             testing = tr.testing,
             testResult = tr.testResult,
@@ -144,6 +149,27 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 
     fun onBraveApiKeyChange(v: String) {
         viewModelScope.launch { settings.setBraveApiKey(v) }
+    }
+
+    fun onContextCompactEnabledChange(v: Boolean) {
+        viewModelScope.launch { settings.setContextCompactEnabled(v) }
+    }
+
+    fun addMcpServer(name: String, url: String) {
+        val n = name.trim()
+        val u = url.trim()
+        if (n.isEmpty() || u.isEmpty()) return
+        viewModelScope.launch {
+            val current = settings.mcpServers.first()
+            settings.setMcpServers(current + McpServer(n, u))
+        }
+    }
+
+    fun removeMcpServer(server: McpServer) {
+        viewModelScope.launch {
+            val current = settings.mcpServers.first()
+            settings.setMcpServers(current.filter { it != server })
+        }
     }
 
     fun onFirstLaunchDone() {

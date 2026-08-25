@@ -36,6 +36,8 @@ class SettingsRepository(private val context: Context) {
         val PIN_HASH = stringPreferencesKey("pin_hash")
         val LOCK_ON_BACKGROUND = booleanPreferencesKey("lock_on_background")
         val BRAVE_API_KEY = stringPreferencesKey("brave_api_key")
+        val MCP_SERVERS = stringPreferencesKey("mcp_servers")
+        val CONTEXT_COMPACT_ENABLED = booleanPreferencesKey("context_compact_enabled")
     }
 
     val defaults = Defaults()
@@ -56,6 +58,7 @@ class SettingsRepository(private val context: Context) {
         val lockEnabled: Boolean = false
         val lockOnBackground: Boolean = true
         val braveApiKey: String = ""
+        val contextCompactEnabled: Boolean = true
     }
 
     // --- flows ---
@@ -85,6 +88,10 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.data.map { it[Keys.LOCK_ON_BACKGROUND] ?: defaults.lockOnBackground }
     val braveApiKey: Flow<String> =
         context.dataStore.data.map { it[Keys.BRAVE_API_KEY] ?: defaults.braveApiKey }
+    val contextCompactEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[Keys.CONTEXT_COMPACT_ENABLED] ?: defaults.contextCompactEnabled }
+    val mcpServers: Flow<List<McpServer>> =
+        context.dataStore.data.map { parseMcpServers(it[Keys.MCP_SERVERS]) }
     val lockConfig: Flow<LockConfig> =
         context.dataStore.data.map { p ->
             LockConfig(
@@ -111,6 +118,8 @@ class SettingsRepository(private val context: Context) {
             lockEnabled = p[Keys.LOCK_ENABLED] ?: defaults.lockEnabled,
             lockOnBackground = p[Keys.LOCK_ON_BACKGROUND] ?: defaults.lockOnBackground,
             braveApiKey = p[Keys.BRAVE_API_KEY] ?: defaults.braveApiKey,
+            contextCompactEnabled = p[Keys.CONTEXT_COMPACT_ENABLED] ?: defaults.contextCompactEnabled,
+            mcpServers = parseMcpServers(p[Keys.MCP_SERVERS]),
         )
     }
 
@@ -132,6 +141,43 @@ class SettingsRepository(private val context: Context) {
     suspend fun setPinHash(v: String) = context.dataStore.edit { it[Keys.PIN_HASH] = v }
     suspend fun setLockOnBackground(v: Boolean) = context.dataStore.edit { it[Keys.LOCK_ON_BACKGROUND] = v }
     suspend fun setBraveApiKey(v: String) = context.dataStore.edit { it[Keys.BRAVE_API_KEY] = v }
+    suspend fun setContextCompactEnabled(v: Boolean) = context.dataStore.edit { it[Keys.CONTEXT_COMPACT_ENABLED] = v }
+    suspend fun setMcpServers(servers: List<McpServer>) =
+        context.dataStore.edit { it[Keys.MCP_SERVERS] = serializeMcpServers(servers) }
+}
+
+/** A configured MCP server (name + streamable HTTP endpoint). */
+data class McpServer(
+    val name: String,
+    val url: String,
+)
+
+private fun parseMcpServers(json: String?): List<McpServer> {
+    if (json.isNullOrBlank()) return emptyList()
+    return try {
+        val arr = org.json.JSONArray(json)
+        (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val name = o.optString("name", "").trim()
+            val url = o.optString("url", "").trim()
+            if (name.isEmpty() || url.isEmpty()) null else McpServer(name, url)
+        }
+    } catch (_: Exception) {
+        emptyList()
+    }
+}
+
+private fun serializeMcpServers(servers: List<McpServer>): String {
+    val arr = org.json.JSONArray()
+    servers.forEach { s ->
+        arr.put(
+            org.json.JSONObject().apply {
+                put("name", s.name)
+                put("url", s.url)
+            }
+        )
+    }
+    return arr.toString()
 }
 
 /** Snapshot of the lock settings (computed once, used by MainActivity). */
@@ -157,4 +203,6 @@ data class SettingsSnapshot(
     val lockEnabled: Boolean,
     val lockOnBackground: Boolean,
     val braveApiKey: String,
+    val contextCompactEnabled: Boolean,
+    val mcpServers: List<McpServer>,
 )

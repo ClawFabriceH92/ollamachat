@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -56,6 +57,7 @@ fun SettingsScreen(
 ) {
     val state by vm.uiState.collectAsState()
     var showPinDialog by remember { mutableStateOf(false) }
+    var showMcpDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -200,6 +202,44 @@ fun SettingsScreen(
                 checked = state.streaming,
                 onChange = vm::onStreamingChange,
             )
+            SwitchRow(
+                label = "Compacter automatiquement le contexte (résumé quand il est plein)",
+                checked = state.contextCompactEnabled,
+                onChange = vm::onContextCompactEnabledChange,
+            )
+
+            HorizontalDivider()
+            SectionTitle("Serveurs MCP (outils externes)")
+            state.mcpServers.forEach { server ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(server.name, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            server.url,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    IconButton(onClick = { vm.removeMcpServer(server) }) {
+                        Icon(
+                            Icons.Filled.Delete,
+                            contentDescription = "Supprimer",
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
+            TextButton(onClick = { showMcpDialog = true }) {
+                Text("Ajouter un serveur MCP")
+            }
+            Text(
+                text = "Le modèle pourra utiliser les outils des serveurs MCP (protocole streamable HTTP, ex. http://IP:PORT/mcp).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             HorizontalDivider()
             SectionTitle("Prompt système par défaut")
@@ -251,6 +291,53 @@ fun SettingsScreen(
             message = state.pinMessage,
         )
     }
+
+    if (showMcpDialog) {
+        McpServerDialog(
+            onDismiss = { showMcpDialog = false },
+            onAdd = { name, url ->
+                vm.addMcpServer(name, url)
+                showMcpDialog = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun McpServerDialog(
+    onDismiss: () -> Unit,
+    onAdd: (name: String, url: String) -> Unit,
+) {
+    var name by rememberSaveable { mutableStateOf("") }
+    var url by rememberSaveable { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Ajouter un serveur MCP") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Nom (ex. météo)") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("URL du serveur (ex. http://192.168.0.50:8000/mcp)") },
+                    singleLine = true,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onAdd(name, url) }, enabled = name.isNotBlank() && url.isNotBlank()) {
+                Text("Ajouter")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Annuler") }
+        },
+    )
 }
 
 @Composable

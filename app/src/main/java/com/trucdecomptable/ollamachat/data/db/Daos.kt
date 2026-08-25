@@ -45,12 +45,36 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC")
     suspend fun listForConversation(conversationId: Long): List<Message>
 
+    @Query("SELECT * FROM messages WHERE id = :id")
+    suspend fun getById(id: Long): Message?
+
     @Insert
     suspend fun insert(m: Message): Long
+
+    @Update
+    suspend fun update(m: Message)
 
     @Query("DELETE FROM messages WHERE conversationId = :conversationId")
     suspend fun deleteForConversation(conversationId: Long)
 
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteById(id: Long)
+}
+
+@Dao
+interface MemoryDao {
+    @Query("SELECT * FROM memories ORDER BY updatedAt DESC")
+    fun observeAll(): Flow<List<Memory>>
+
+    @Query("SELECT * FROM memories ORDER BY updatedAt DESC")
+    suspend fun listAll(): List<Memory>
+
+    @Insert
+    suspend fun insert(m: Memory): Long
+
+    @Update
+    suspend fun update(m: Memory)
+
+    @Delete
+    suspend fun delete(m: Memory)
 }

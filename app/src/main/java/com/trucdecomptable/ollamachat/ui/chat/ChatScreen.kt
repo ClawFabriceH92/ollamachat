@@ -27,6 +27,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material3.AlertDialog
@@ -95,6 +97,7 @@ fun ChatScreen(
     var showModelDialog by remember { mutableStateOf(false) }
     var showConfirmDelete by remember { mutableStateOf(false) }
     var showUrlDialog by remember { mutableStateOf(false) }
+    var showMemoryDialog by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
@@ -168,6 +171,19 @@ fun ChatScreen(
                                 text = { Text("Changer de modèle…") },
                                 onClick = { showMenu = false; showModelDialog = true },
                                 leadingIcon = { Icon(Icons.Filled.Refresh, null) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Mémoire…") },
+                                onClick = { showMenu = false; showMemoryDialog = true },
+                                leadingIcon = { Icon(Icons.Filled.Bookmark, null) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Exporter la conversation…") },
+                                onClick = {
+                                    showMenu = false
+                                    exportConversation(context, vm.exportMarkdown())
+                                },
+                                leadingIcon = { Icon(Icons.Filled.Share, null) },
                             )
                             DropdownMenuItem(
                                 text = { Text("Lire une page web…") },
@@ -328,6 +344,15 @@ fun ChatScreen(
         )
     }
 
+    if (showMemoryDialog) {
+        MemoryDialog(
+            memories = vm.memories.collectAsState().value,
+            onAdd = { vm.addMemory(it) },
+            onDelete = { vm.deleteMemory(it) },
+            onDismiss = { showMemoryDialog = false },
+        )
+    }
+
     if (showConfirmDelete) {
         AlertDialog(
             onDismissRequest = { showConfirmDelete = false },
@@ -428,6 +453,14 @@ private fun MessageBubble(message: Message, onCopy: () -> Unit) {
                 Text(
                     text = message.content,
                     style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            message.stats?.let { stats ->
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "⚡ $stats",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
                 )
             }
             Text(
@@ -542,6 +575,91 @@ private fun ModelPickerDialog(
             TextButton(onClick = dismiss) { Text("Annuler") }
         },
     )
+}
+
+@Composable
+private fun MemoryDialog(
+    memories: List<com.trucdecomptable.ollamachat.data.db.Memory>,
+    onAdd: (String) -> Unit,
+    onDelete: (com.trucdecomptable.ollamachat.data.db.Memory) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var newMemory by rememberSaveable { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Mémoire persistante") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Ces faits sont injectés dans chaque conversation pour que le modèle te connaisse.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = newMemory,
+                    onValueChange = { newMemory = it },
+                    label = { Text("Nouveau fait à retenir") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (memories.isEmpty()) {
+                    Text("Aucune mémoire pour l'instant.", style = MaterialTheme.typography.bodyMedium)
+                } else {
+                    memories.forEach { m ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = m.content,
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            IconButton(onClick = { onDelete(m) }) {
+                                Icon(
+                                    Icons.Filled.Delete,
+                                    contentDescription = "Supprimer",
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                if (newMemory.isNotBlank()) {
+                    onAdd(newMemory)
+                    newMemory = ""
+                }
+            }) { Text("Ajouter") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Fermer") }
+        },
+    )
+}
+
+/** Shares the conversation as a .md file via the Android share sheet. */
+private fun exportConversation(context: android.content.Context, markdown: String) {
+    try {
+        val file = java.io.File(context.cacheDir, "ollamachat-export.md")
+        file.writeText(markdown)
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file,
+        )
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/markdown"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            putExtra(android.content.Intent.EXTRA_SUBJECT, "Conversation OllamaChat")
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(android.content.Intent.createChooser(intent, "Exporter la conversation"))
+    } catch (_: Exception) {
+        // Share sheet unavailable — ignore.
+    }
 }
 
 @Composable

@@ -36,4 +36,14 @@ data class Message(
     val contentType: String = "text", // text | image
     val imageBase64: String? = null,  // for contentType = image
     val createdAt: Long = System.currentTimeMillis(),
+    val stats: String? = null,        // e.g. "42 tok/s · 850 tokens" (assistant messages)
+)
+
+/** Long-term memory injected into the system prompt of every conversation. */
+@Entity(tableName = "memories")
+data class Memory(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val content: String,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
 )

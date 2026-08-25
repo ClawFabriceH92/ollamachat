@@ -123,7 +123,7 @@ class ChatViewModel(
             onDelta = { delta ->
                 transient.value = transient.value.copy(streamingText = transient.value.streamingText + delta)
             },
-            onResult = { finalText, err ->
+            onResult = { finalText, _stats, err ->
                 if (err != null) {
                     transient.value = transient.value.copy(
                         error = err,
@@ -268,6 +268,42 @@ class ChatViewModel(
 
     fun clearMessages() {
         viewModelScope.launch { db.messageDao().deleteForConversation(conversationId) }
+    }
+
+    // --- Long-term memory ---
+
+    val memories: StateFlow<List<com.trucdecomptable.ollamachat.data.db.Memory>> =
+        db.memoryDao().observeAll()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun addMemory(content: String) {
+        val clean = content.trim()
+        if (clean.isEmpty()) return
+        viewModelScope.launch {
+            db.memoryDao().insert(com.trucdecomptable.ollamachat.data.db.Memory(content = clean))
+        }
+    }
+
+    fun deleteMemory(memory: com.trucdecomptable.ollamachat.data.db.Memory) {
+        viewModelScope.launch { db.memoryDao().delete(memory) }
+    }
+
+    /** Builds a markdown export of the conversation. */
+    fun exportMarkdown(): String {
+        val conv = uiState.value
+        val sb = StringBuilder()
+        sb.append("# ").append(conv.conversationTitle.ifBlank { "Conversation" }).append("\n\n")
+        conv.messages.forEach { m ->
+            val role = when (m.role) {
+                "user" -> "**Vous**"
+                "assistant" -> "**Assistant**"
+                else -> "*Système*"
+            }
+            sb.append("### ").append(role).append("\n\n")
+            sb.append(m.content).append("\n\n")
+            m.stats?.let { sb.append("_").append(it).append("_\n\n") }
+        }
+        return sb.toString()
     }
 
     class Factory(private val conversationId: Long, private val container: AppContainer) :
