@@ -129,7 +129,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // --- PDF text extraction ---
-    implementation("org.apache.pdfbox:pdfbox-android:2.0.27.0")
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
     // --- Biometric unlock ---
     implementation("androidx.biometric:biometric:1.1.0")
