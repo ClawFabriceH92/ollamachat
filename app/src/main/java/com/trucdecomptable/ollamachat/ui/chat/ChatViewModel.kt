@@ -27,7 +27,16 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** A user-facing message identified by a string resource, localized at render time. */
-data class UiMessage(@StringRes val resId: Int, val arg: String? = null)
+data class UiMessage(@StringRes val resId: Int, val args: List<Any> = emptyList())
+
+/** Builds a [UiMessage]; null arguments become empty strings. */
+fun uiMessage(@StringRes resId: Int, vararg args: Any?): UiMessage =
+    UiMessage(resId, args.map { it ?: "" })
+
+/** Formats the message with the current locale. */
+fun UiMessage.resolve(context: Context): String =
+    if (args.isEmpty()) context.getString(resId)
+    else context.getString(resId, *args.toTypedArray())
 
 data class ChatUiState(
     val messages: List<Message> = emptyList(),
@@ -411,8 +420,8 @@ class ChatViewModel(
         }
     }
 
-    private fun toast(@StringRes resId: Int, arg: String? = null) {
-        transient.update { it.copy(toast = UiMessage(resId, arg)) }
+    private fun toast(@StringRes resId: Int, vararg args: Any?) {
+        transient.update { it.copy(toast = uiMessage(resId, *args)) }
     }
 
     override fun onCleared() {

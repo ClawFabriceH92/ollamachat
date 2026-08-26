@@ -192,6 +192,24 @@
     <string name="welcome_no_models">No model installed on the server — install one, then try again.</string>
     <string name="welcome_retest">Test the connection again</string>
 
+    <!-- Backup -->
+    <string name="settings_section_data">Data</string>
+    <string name="settings_export">Export my data…</string>
+    <string name="settings_import">Import a backup…</string>
+    <string name="settings_backup_help">System backup is disabled to protect your conversations. This encrypted export is the only way to move them to another phone. Keep the passphrase: without it the file cannot be recovered.</string>
+    <string name="backup_export_title">Export my data</string>
+    <string name="backup_import_title">Import a backup</string>
+    <string name="backup_passphrase">Passphrase</string>
+    <string name="backup_passphrase_confirm">Confirm the passphrase</string>
+    <string name="backup_passphrase_too_short">At least %1$d characters</string>
+    <string name="backup_passphrase_mismatch">The two passphrases do not match</string>
+    <string name="backup_working">Working…</string>
+    <string name="backup_exported">Backup exported</string>
+    <string name="backup_export_failed">Export failed: %1$s</string>
+    <string name="backup_imported">Imported %1$d conversation(s) and %2$d message(s)</string>
+    <string name="backup_import_failed">Import failed: %1$s</string>
+    <string name="backup_import_note">Importing adds conversations to yours; it never erases anything.</string>
+
     <!-- Notifications -->
     <string name="notification_channel_generation">Generation in progress</string>
     <string name="notification_channel_updates">Updates</string>

@@ -35,6 +35,9 @@ interface ConversationDao {
     )
     fun observeSummaries(archived: Boolean, query: String): Flow<List<ConversationSummary>>
 
+    @Query("SELECT * FROM conversations ORDER BY createdAt ASC, id ASC")
+    suspend fun listAll(): List<Conversation>
+
     @Query("SELECT * FROM conversations WHERE id = :id")
     fun observeById(id: Long): Flow<Conversation?>
 
@@ -126,6 +129,9 @@ interface MemoryDao {
 
     @Query("SELECT * FROM memories ORDER BY updatedAt DESC LIMIT :limit")
     suspend fun listRecent(limit: Int): List<Memory>
+
+    @Query("SELECT * FROM memories ORDER BY updatedAt DESC")
+    suspend fun listAll(): List<Memory>
 
     @Insert
     suspend fun insert(m: Memory): Long

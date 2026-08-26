@@ -157,9 +157,7 @@ fun ChatScreen(
 
     LaunchedEffect(state.toast) {
         state.toast?.let { message ->
-            val text = message.arg?.let { context.getString(message.resId, it) }
-                ?: context.getString(message.resId)
-            snackbarHostState.showSnackbar(text)
+            snackbarHostState.showSnackbar(message.resolve(context))
             vm.consumeToast()
         }
     }

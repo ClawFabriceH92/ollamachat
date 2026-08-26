@@ -1,5 +1,8 @@
 package com.trucdecomptable.ollamachat.ui.settings
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -35,12 +38,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +65,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.trucdecomptable.ollamachat.OllamaChatApp
 import com.trucdecomptable.ollamachat.R
+import com.trucdecomptable.ollamachat.data.backup.BackupCrypto
+import com.trucdecomptable.ollamachat.ui.chat.resolve
 import com.trucdecomptable.ollamachat.util.PinUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -71,8 +79,31 @@ fun SettingsScreen(
     var showPinDialog by remember { mutableStateOf(false) }
     var showMcpDialog by remember { mutableStateOf(false) }
     var showKey by rememberSaveable { mutableStateOf(false) }
+    var exportUri by remember { mutableStateOf<Uri?>(null) }
+    var importUri by remember { mutableStateOf<Uri?>(null) }
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // The file is chosen first, the passphrase asked second: cancelling the
+    // picker then leaves nothing half-entered behind.
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri -> exportUri = uri }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> importUri = uri }
+
+    LaunchedEffect(state.backupMessage) {
+        state.backupMessage?.let { message ->
+            if (!state.backupBusy) {
+                snackbarHostState.showSnackbar(message.resolve(context))
+                vm.consumeBackupMessage()
+            }
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.settings_title)) },
@@ -314,6 +345,27 @@ fun SettingsScreen(
             if (!state.hasPin) Hint(stringResource(R.string.settings_lock_needs_pin))
             Hint(stringResource(R.string.settings_security_help))
 
+            HorizontalDivider()
+            SectionTitle(stringResource(R.string.settings_section_data))
+            OutlinedButton(
+                onClick = { exportLauncher.launch("ollamachat-sauvegarde.ocb") },
+                enabled = !state.backupBusy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(stringResource(R.string.settings_export)) }
+            OutlinedButton(
+                onClick = { importLauncher.launch(arrayOf("*/*")) },
+                enabled = !state.backupBusy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(stringResource(R.string.settings_import)) }
+            if (state.backupBusy) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.backup_working), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Hint(stringResource(R.string.settings_backup_help))
+
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -327,6 +379,32 @@ fun SettingsScreen(
                 vm.consumePinMessage()
             },
             onConfirm = { old, new, confirm -> vm.changePin(old, new, confirm) },
+        )
+    }
+
+    exportUri?.let { uri ->
+        PassphraseDialog(
+            title = stringResource(R.string.backup_export_title),
+            confirmPassphrase = true,
+            note = stringResource(R.string.settings_backup_help),
+            onDismiss = { exportUri = null },
+            onConfirm = { passphrase ->
+                vm.exportBackup(context, uri, passphrase)
+                exportUri = null
+            },
+        )
+    }
+
+    importUri?.let { uri ->
+        PassphraseDialog(
+            title = stringResource(R.string.backup_import_title),
+            confirmPassphrase = false,
+            note = stringResource(R.string.backup_import_note),
+            onDismiss = { importUri = null },
+            onConfirm = { passphrase ->
+                vm.importBackup(context, uri, passphrase)
+                importUri = null
+            },
         )
     }
 
@@ -368,6 +446,78 @@ private fun McpServerDialog(onDismiss: () -> Unit, onAdd: (name: String, url: St
             TextButton(onClick = { onAdd(name, url) }, enabled = name.isNotBlank() && url.isNotBlank()) {
                 Text(stringResource(R.string.action_add))
             }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun PassphraseDialog(
+    title: String,
+    confirmPassphrase: Boolean,
+    note: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var passphrase by rememberSaveable { mutableStateOf("") }
+    var confirmation by rememberSaveable { mutableStateOf("") }
+    var visible by rememberSaveable { mutableStateOf(false) }
+
+    val tooShort = passphrase.length < BackupCrypto.MIN_PASSPHRASE
+    val mismatch = confirmPassphrase && confirmation != passphrase
+    val error = when {
+        passphrase.isEmpty() -> null
+        tooShort -> stringResource(R.string.backup_passphrase_too_short, BackupCrypto.MIN_PASSPHRASE)
+        mismatch && confirmation.isNotEmpty() -> stringResource(R.string.backup_passphrase_mismatch)
+        else -> null
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = passphrase,
+                    onValueChange = { passphrase = it },
+                    label = { Text(stringResource(R.string.backup_passphrase)) },
+                    singleLine = true,
+                    visualTransformation = if (visible) VisualTransformation.None
+                    else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { visible = !visible }) {
+                            Icon(
+                                if (visible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                contentDescription = stringResource(
+                                    if (visible) R.string.settings_hide_key else R.string.settings_show_key
+                                ),
+                            )
+                        }
+                    },
+                )
+                if (confirmPassphrase) {
+                    OutlinedTextField(
+                        value = confirmation,
+                        onValueChange = { confirmation = it },
+                        label = { Text(stringResource(R.string.backup_passphrase_confirm)) },
+                        singleLine = true,
+                        visualTransformation = if (visible) VisualTransformation.None
+                        else PasswordVisualTransformation(),
+                    )
+                }
+                error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                Hint(note)
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(passphrase) },
+                enabled = !tooShort && !mismatch,
+            ) { Text(stringResource(R.string.action_ok)) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }

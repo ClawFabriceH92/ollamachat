@@ -1,17 +1,22 @@
 package com.trucdecomptable.ollamachat.ui.settings
 
+import android.content.Context
+import android.net.Uri
 import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.trucdecomptable.ollamachat.AppContainer
 import com.trucdecomptable.ollamachat.R
+import com.trucdecomptable.ollamachat.data.backup.BackupArchive
+import com.trucdecomptable.ollamachat.data.backup.BackupCrypto
 import com.trucdecomptable.ollamachat.data.mcp.McpClient
 import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
 import com.trucdecomptable.ollamachat.data.ollama.NetworkScanner
 import com.trucdecomptable.ollamachat.data.prefs.McpServer
 import com.trucdecomptable.ollamachat.util.PinUtils
 import com.trucdecomptable.ollamachat.ui.chat.UiMessage
+import com.trucdecomptable.ollamachat.ui.chat.uiMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +53,8 @@ data class SettingsUiState(
     val pinMessage: UiMessage? = null,
     val scanning: Boolean = false,
     val scanResults: List<NetworkScanner.ScanResult> = emptyList(),
+    val backupBusy: Boolean = false,
+    val backupMessage: UiMessage? = null,
 )
 
 /** Transient (non-persisted) UI state merged into the settings snapshot. */
@@ -59,6 +66,8 @@ private data class Transient(
     val pinMessage: UiMessage? = null,
     val scanning: Boolean = false,
     val scanResults: List<NetworkScanner.ScanResult> = emptyList(),
+    val backupBusy: Boolean = false,
+    val backupMessage: UiMessage? = null,
 )
 
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
@@ -97,6 +106,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             pinMessage = tr.pinMessage,
             scanning = tr.scanning,
             scanResults = tr.scanResults,
+            backupBusy = tr.backupBusy,
+            backupMessage = tr.backupMessage,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
 
@@ -246,6 +257,48 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun consumePinMessage() = transient.update { it.copy(pinMessage = null) }
+
+    // --- encrypted export / import ---
+
+    fun exportBackup(context: Context, uri: Uri, passphrase: String) {
+        if (transient.value.backupBusy) return
+        viewModelScope.launch {
+            transient.update { it.copy(backupBusy = true, backupMessage = UiMessage(R.string.backup_working)) }
+            val message = try {
+                val bytes = container.backupManager.export(passphrase.toCharArray())
+                context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    ?: error("flux indisponible")
+                UiMessage(R.string.backup_exported)
+            } catch (e: Exception) {
+                uiMessage(R.string.backup_export_failed, e.message)
+            }
+            transient.update { it.copy(backupBusy = false, backupMessage = message) }
+        }
+    }
+
+    fun importBackup(context: Context, uri: Uri, passphrase: String) {
+        if (transient.value.backupBusy) return
+        viewModelScope.launch {
+            transient.update { it.copy(backupBusy = true, backupMessage = UiMessage(R.string.backup_working)) }
+            val message = try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: error("fichier illisible")
+                val result = container.backupManager.import(bytes, passphrase.toCharArray())
+                uiMessage(R.string.backup_imported, result.conversations, result.messages)
+            } catch (e: BackupCrypto.WrongPassphraseException) {
+                uiMessage(R.string.backup_import_failed, e.message)
+            } catch (e: BackupCrypto.NotABackupException) {
+                uiMessage(R.string.backup_import_failed, e.message)
+            } catch (e: BackupArchive.UnsupportedVersionException) {
+                uiMessage(R.string.backup_import_failed, e.message)
+            } catch (e: Exception) {
+                uiMessage(R.string.backup_import_failed, e.message)
+            }
+            transient.update { it.copy(backupBusy = false, backupMessage = message) }
+        }
+    }
+
+    fun consumeBackupMessage() = transient.update { it.copy(backupMessage = null) }
 
     private fun pinMessage(@StringRes resId: Int) =
         transient.update { it.copy(pinMessage = UiMessage(resId)) }

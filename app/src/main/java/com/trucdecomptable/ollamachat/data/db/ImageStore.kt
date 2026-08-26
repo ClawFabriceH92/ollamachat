@@ -38,6 +38,15 @@ object ImageStore {
         null
     }
 
+    /** Stores [bytes] verbatim (already-processed images, e.g. from a backup). */
+    fun saveBytes(context: Context, bytes: ByteArray, extension: String = "jpg"): String? = try {
+        val file = File(dir(context), "${UUID.randomUUID()}.$extension")
+        file.writeBytes(bytes)
+        file.absolutePath
+    } catch (_: Exception) {
+        null
+    }
+
     fun readBase64(path: String?): String? {
         if (path.isNullOrBlank()) return null
         return try {

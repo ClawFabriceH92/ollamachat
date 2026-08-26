@@ -61,6 +61,19 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: ./gradlew connectedDebugAndroidTest --no-daemon
 
+      # "0 tests found" also exits 0, which would make this whole job a
+      # decorative green tick.
+      - name: Assert instrumented tests actually ran
+        run: |
+          python3 - <<'EOF'
+          import glob, sys, xml.etree.ElementTree as ET
+          files = glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True)
+          total = sum(int(ET.parse(f).getroot().get('tests', 0)) for f in files)
+          print(f'{len(files)} fichier(s) de résultats, {total} test(s)')
+          if total == 0:
+              sys.exit('Aucun test instrumenté exécuté')
+          EOF
+
       - name: Upload instrumented test report
         if: always()
         uses: actions/upload-artifact@v4
