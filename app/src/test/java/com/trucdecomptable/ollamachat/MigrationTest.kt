@@ -50,6 +50,7 @@ class MigrationTest {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 createV1(db)
                 if (version >= 2) AppDatabase.MIGRATION_1_2.migrate(db)
+                if (version >= 3) AppDatabase.MIGRATION_2_3.migrate(db)
             }
 
             override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
@@ -141,11 +142,30 @@ class MigrationTest {
     }
 
     @Test
-    fun `the whole 1 to 3 chain applies cleanly`() {
+    fun `3 to 4 adds the ephemeral column, off by default`() {
+        val db = openAt(3)
+        db.execSQL(
+            "INSERT INTO conversations (id, title, systemPrompt, model, createdAt, updatedAt, archived) " +
+                "VALUES (1, 'Test', NULL, NULL, 10, 10, 0)"
+        )
+
+        AppDatabase.MIGRATION_3_4.migrate(db)
+
+        assertTrue("ephemeralMinutes" in columns(db, "conversations"))
+        db.query("SELECT ephemeralMinutes FROM conversations").use { c ->
+            assertTrue(c.moveToFirst())
+            // Existing conversations must not start expiring on their own.
+            assertEquals(0, c.getInt(0))
+        }
+    }
+
+    @Test
+    fun `the whole 1 to 4 chain applies cleanly`() {
         val db = openAt(1)
         AppDatabase.MIGRATIONS.forEach { it.migrate(db) }
 
         assertTrue(columns(db, "messages").containsAll(listOf("stats", "imagePath", "excludedFromContext")))
+        assertTrue(columns(db, "conversations").contains("ephemeralMinutes"))
         assertTrue(columns(db, "memories").contains("content"))
     }
 }

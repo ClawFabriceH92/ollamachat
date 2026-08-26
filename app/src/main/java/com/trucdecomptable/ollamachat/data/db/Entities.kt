@@ -15,6 +15,12 @@ data class Conversation(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val archived: Boolean = false,
+    /**
+     * Minutes of inactivity after which the whole conversation is deleted.
+     * 0 means it is kept indefinitely.
+     */
+    @ColumnInfo(defaultValue = "0")
+    val ephemeralMinutes: Int = 0,
 )
 
 @Entity(
@@ -90,4 +96,5 @@ data class ConversationSummary(
     val updatedAt: Long,
     val archived: Boolean,
     val preview: String?,
+    val ephemeralMinutes: Int,
 )

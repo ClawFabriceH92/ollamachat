@@ -114,6 +114,9 @@ class ChatRepository(
                         imagePaths = imagePathsOf(imagePaths),
                     )
                 )
+                // Restarts the ephemeral countdown: a conversation in use must
+                // not expire mid-exchange.
+                db.conversationDao().touch(conversationId)
                 runTurn(conversationId, content, onDelta, onThinking)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -523,6 +526,22 @@ class ChatRepository(
         db.conversationDao().insert(Conversation(title = "", systemPrompt = systemPrompt, model = model))
 
     /** Removes a conversation and the image files its messages referenced. */
+    /**
+     * Deletes the conversations whose ephemeral countdown has run out.
+     * Returns how many were removed.
+     */
+    suspend fun purgeExpired(now: Long = System.currentTimeMillis()): Int {
+        val expired = db.conversationDao().listExpired(now)
+        expired.forEach { deleteConversation(it.id) }
+        if (expired.isNotEmpty()) {
+            DiagnosticLog.record("ephemeral", "${expired.size} conversation(s) expirée(s) supprimée(s)")
+        }
+        return expired.size
+    }
+
+    suspend fun setEphemeral(conversationId: Long, minutes: Int) =
+        db.conversationDao().setEphemeral(conversationId, minutes)
+
     private suspend fun deleteImagesOf(conversationId: Long) {
         db.messageDao().imagePathsFor(conversationId)
             .flatMap { it.orEmpty().lineSequence().filter(String::isNotBlank).toList() }

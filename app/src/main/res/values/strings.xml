@@ -246,6 +246,21 @@
     <string name="settings_turbo_model">Modèle turbo (optionnel)</string>
     <string name="settings_turbo_model_help">Un modèle plus petit répond nettement plus vite. Laisse vide pour garder le modèle habituel.</string>
 
+    <!-- Éphémère -->
+    <string name="chat_menu_ephemeral">Effacement automatique…</string>
+    <string name="ephemeral_title">Effacement automatique</string>
+    <string name="ephemeral_off">Désactivé</string>
+    <string name="ephemeral_minutes">%1$d min</string>
+    <string name="ephemeral_hours">%1$d h</string>
+    <string name="ephemeral_hint">La conversation entière — messages et images — sera supprimée après ce délai sans activité. Le compte à rebours repart à zéro à chaque message.</string>
+    <string name="ephemeral_caveat">La suppression a lieu pendant que l’application tourne : au démarrage, puis toutes les 30 secondes. Ce n’est donc pas une protection contre quelqu’un qui a ton téléphone en main.</string>
+    <string name="ephemeral_remaining_soon">s’efface dans moins d’une minute</string>
+    <string name="ephemeral_remaining_minutes">s’efface dans %1$d min</string>
+    <string name="ephemeral_remaining_hours">s’efface dans %1$d h</string>
+    <string name="ephemeral_badge">éphémère</string>
+    <string name="ephemeral_set">Effacement dans %1$s activé</string>
+    <string name="ephemeral_cleared">Effacement automatique désactivé</string>
+
     <!-- Notifications -->
     <string name="notification_channel_generation">Génération en cours</string>
     <string name="notification_channel_updates">Mises à jour</string>

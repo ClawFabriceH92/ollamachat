@@ -244,6 +244,21 @@
     <string name="settings_turbo_model">Turbo model (optional)</string>
     <string name="settings_turbo_model_help">A smaller model answers markedly faster. Leave empty to keep your usual one.</string>
 
+    <!-- Ephemeral -->
+    <string name="chat_menu_ephemeral">Auto-delete…</string>
+    <string name="ephemeral_title">Auto-delete</string>
+    <string name="ephemeral_off">Off</string>
+    <string name="ephemeral_minutes">%1$d min</string>
+    <string name="ephemeral_hours">%1$d h</string>
+    <string name="ephemeral_hint">The whole conversation — messages and images — is deleted after this much inactivity. The countdown restarts with every message.</string>
+    <string name="ephemeral_caveat">Deletion happens while the app is running: at startup, then every 30 seconds. It is not a protection against someone holding your phone.</string>
+    <string name="ephemeral_remaining_soon">deletes in under a minute</string>
+    <string name="ephemeral_remaining_minutes">deletes in %1$d min</string>
+    <string name="ephemeral_remaining_hours">deletes in %1$d h</string>
+    <string name="ephemeral_badge">ephemeral</string>
+    <string name="ephemeral_set">Auto-delete set to %1$s</string>
+    <string name="ephemeral_cleared">Auto-delete turned off</string>
+
     <!-- Notifications -->
     <string name="notification_channel_generation">Generation in progress</string>
     <string name="notification_channel_updates">Updates</string>

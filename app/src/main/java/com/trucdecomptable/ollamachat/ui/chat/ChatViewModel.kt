@@ -58,6 +58,8 @@ data class ChatUiState(
     val toast: UiMessage? = null,
     val hasOlderMessages: Boolean = false,
     val turbo: Boolean = false,
+    val ephemeralMinutes: Int = 0,
+    val lastActivity: Long = 0L,
 ) {
     val activeModel: String get() = conversationModel ?: defaultModel
 }
@@ -133,6 +135,8 @@ class ChatViewModel(
             toast = tr.toast,
             hasOlderMessages = total > msgs.size,
             turbo = fast,
+            ephemeralMinutes = conv?.ephemeralMinutes ?: 0,
+            lastActivity = conv?.updatedAt ?: 0L,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ChatUiState())
 
@@ -431,6 +435,11 @@ class ChatViewModel(
             db.conversationDao().update(conv.copy(model = model))
             refreshCapabilities(model)
         }
+    }
+
+    /** 0 turns auto-delete off; anything else starts the countdown now. */
+    fun setEphemeral(minutes: Int) {
+        viewModelScope.launch { repo.setEphemeral(conversationId, minutes) }
     }
 
     fun archiveConversation() {

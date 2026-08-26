@@ -20,6 +20,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -472,6 +473,48 @@ class ChatRepositoryTest {
         assertEquals(8192, client.optionsSeen.single()["num_ctx"])
         assertEquals("5m", client.keepAliveSeen.single())
         assertTrue(client.toolsOffered.single().isNotEmpty())
+    }
+
+    // --- ephemeral conversations ---
+
+    @Test
+    fun `an expired conversation and its messages are purged`() = runBlocking {
+        val id = newConversation()
+        val repo = repository(FakeClient(mutableListOf(ChatStreamResult("ok"))))
+        send(repo, id)
+        repo.setEphemeral(id, 5)
+
+        val now = System.currentTimeMillis()
+        assertEquals(0, repo.purgeExpired(now))
+        assertEquals(1, repo.purgeExpired(now + 6 * 60_000L))
+
+        assertNull(db.conversationDao().getById(id))
+        assertTrue(db.messageDao().listForConversation(id).isEmpty())
+    }
+
+    @Test
+    fun `a permanent conversation is never purged`() = runBlocking {
+        val id = newConversation()
+        val repo = repository(FakeClient(mutableListOf(ChatStreamResult("ok"))))
+        send(repo, id)
+
+        assertEquals(0, repo.purgeExpired(System.currentTimeMillis() + 365L * 24 * 60 * 60_000L))
+        assertNotNull(db.conversationDao().getById(id))
+    }
+
+    @Test
+    fun `sending restarts the countdown`() = runBlocking {
+        val id = newConversation()
+        val repo = repository(FakeClient(mutableListOf(ChatStreamResult("un"), ChatStreamResult("deux"))))
+        send(repo, id, "premier")
+        repo.setEphemeral(id, 5)
+        val firstDeadline = db.conversationDao().getById(id)!!.updatedAt
+
+        Thread.sleep(20)
+        send(repo, id, "second")
+
+        val secondDeadline = db.conversationDao().getById(id)!!.updatedAt
+        assertTrue("le compte à rebours n'a pas redémarré", secondDeadline > firstDeadline)
     }
 
     @Test

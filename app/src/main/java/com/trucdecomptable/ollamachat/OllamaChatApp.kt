@@ -11,7 +11,10 @@ import com.trucdecomptable.ollamachat.service.GenerationService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private const val PURGE_INTERVAL_MS = 30_000L
 
 class OllamaChatApp : Application() {
 
@@ -26,6 +29,16 @@ class OllamaChatApp : Application() {
 
         // One-time maintenance: pull pre-v1.3 inline images out of the database.
         scope.launch { ImageStore.migrateLegacyImages(this@OllamaChatApp, container.database) }
+
+        // Ephemeral conversations are swept at start and then on a ticker.
+        // Deletion therefore happens while the app runs, not in the
+        // background — stated plainly in the settings rather than implied.
+        scope.launch {
+            while (true) {
+                runCatching { container.chatRepository.purgeExpired() }
+                delay(PURGE_INTERVAL_MS)
+            }
+        }
 
         // Hold a foreground service for as long as a model is generating, so
         // backgrounding the app does not cost the user their answer.
