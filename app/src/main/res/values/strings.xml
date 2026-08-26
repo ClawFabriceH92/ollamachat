@@ -235,6 +235,17 @@
     <string name="models_delete_failed">Échec de la suppression : %1$s</string>
     <string name="models_empty">Aucun modèle sur le serveur.</string>
 
+    <!-- Turbo -->
+    <string name="turbo_toggle">Mode turbo</string>
+    <string name="turbo_on">Turbo activé — réponses plus rapides, contexte réduit</string>
+    <string name="turbo_off">Turbo désactivé</string>
+    <string name="settings_section_turbo">Vitesse</string>
+    <string name="settings_turbo">Mode turbo</string>
+    <string name="settings_turbo_help">Privilégie la vitesse sur la profondeur. Le modèle reste chargé en mémoire (30 min), la compaction et les outils sont désactivés, le mode réfléchi est coupé, et seuls les 6 derniers messages sont envoyés. Tes réglages ne sont pas modifiés : couper le turbo les restaure tels quels.</string>
+    <string name="settings_turbo_warning">Le modèle oublie le début des longues conversations tant que le turbo est actif.</string>
+    <string name="settings_turbo_model">Modèle turbo (optionnel)</string>
+    <string name="settings_turbo_model_help">Un modèle plus petit répond nettement plus vite. Laisse vide pour garder le modèle habituel.</string>
+
     <!-- Notifications -->
     <string name="notification_channel_generation">Génération en cours</string>
     <string name="notification_channel_updates">Mises à jour</string>

@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Cancel
@@ -132,6 +133,7 @@ fun ChatScreen(
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val turboAnnounced = remember { mutableStateOf<Boolean?>(null) }
 
     val documentLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -156,6 +158,16 @@ fun ChatScreen(
             snackbarHostState.showSnackbar(message.resolve(context))
             vm.consumeToast()
         }
+    }
+
+    LaunchedEffect(state.turbo) {
+        // Skip the very first composition: only report an actual change.
+        if (turboAnnounced.value != null && turboAnnounced.value != state.turbo) {
+            snackbarHostState.showSnackbar(
+                context.getString(if (state.turbo) R.string.turbo_on else R.string.turbo_off)
+            )
+        }
+        turboAnnounced.value = state.turbo
     }
 
     LaunchedEffect(state.error) {
@@ -201,6 +213,16 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    // Reachable in one tap: a speed switch buried in the
+                    // settings is a speed switch nobody flips.
+                    IconButton(onClick = { vm.setTurbo(!state.turbo) }) {
+                        Icon(
+                            Icons.Filled.Bolt,
+                            contentDescription = stringResource(R.string.turbo_toggle),
+                            tint = if (state.turbo) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.action_settings))
                     }

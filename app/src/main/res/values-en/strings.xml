@@ -233,6 +233,17 @@
     <string name="models_delete_failed">Delete failed: %1$s</string>
     <string name="models_empty">No model on the server.</string>
 
+    <!-- Turbo -->
+    <string name="turbo_toggle">Turbo mode</string>
+    <string name="turbo_on">Turbo on — faster answers, shorter context</string>
+    <string name="turbo_off">Turbo off</string>
+    <string name="settings_section_turbo">Speed</string>
+    <string name="settings_turbo">Turbo mode</string>
+    <string name="settings_turbo_help">Favours speed over depth. The model stays loaded in memory (30 min), compaction and tools are disabled, thinking mode is off, and only the last 6 messages are sent. Your settings are untouched: turning turbo off restores them exactly.</string>
+    <string name="settings_turbo_warning">The model forgets the start of long conversations while turbo is on.</string>
+    <string name="settings_turbo_model">Turbo model (optional)</string>
+    <string name="settings_turbo_model_help">A smaller model answers markedly faster. Leave empty to keep your usual one.</string>
+
     <!-- Notifications -->
     <string name="notification_channel_generation">Generation in progress</string>
     <string name="notification_channel_updates">Updates</string>

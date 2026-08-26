@@ -8,6 +8,10 @@ Client Android pour serveur **Ollama** — conversations locales et chiffrées, 
 - 🗂️ Multi-conversations : créer, renommer, archiver, supprimer, **rechercher** (titre et contenu)
 - ✏️ Par message : copier, **modifier et renvoyer**, **régénérer**, supprimer
 - 🖼️ **Plusieurs images par message**, affichées dans la conversation et redimensionnées à l’import
+- ⚡ **Mode turbo** : bascule d’un geste dans la barre du chat, pour privilégier la vitesse
+  (modèle maintenu en mémoire, compaction et outils coupés, contexte réduit aux 6 derniers
+  messages, modèle plus léger au choix). Tes réglages ne sont pas modifiés — c’est une couche
+  de surcharge, couper le turbo les restaure tels quels
 - 🧠 Raisonnement (`think`) et traces d’outils repliables
 - 🛠️ Outils : recherche web, lecture d’URL, météo, calcul, mémoire persistante, **serveurs MCP**
   — proposés uniquement aux modèles qui les déclarent

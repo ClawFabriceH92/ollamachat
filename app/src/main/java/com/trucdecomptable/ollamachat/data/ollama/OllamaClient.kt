@@ -128,6 +128,35 @@ open class OllamaClient(
             }
         }
 
+    /**
+     * Asks the server to load [model] into memory and hold it there.
+     *
+     * A model that has been evicted costs several seconds before the first
+     * token of the next message; warming it up when a conversation opens moves
+     * that wait out of the user's way. Failures are irrelevant — this is an
+     * optimisation, not a step.
+     */
+    open suspend fun warmUp(baseUrl: String, model: String, keepAlive: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                // An empty prompt loads the model without generating anything.
+                val payload = JSONObject()
+                    .put("model", model)
+                    .put("keep_alive", keepAlive)
+                    .toString()
+                val req = Request.Builder()
+                    .url("${normalizeBaseUrl(baseUrl)}/api/generate")
+                    .post(payload.toRequestBody(JSON.toMediaType()))
+                    .build()
+                streamHttp.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) Result.success(Unit)
+                    else Result.failure(IOException("HTTP ${resp.code}"))
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
     /** Progress of a model download, as Ollama reports it. */
     data class PullProgress(val status: String, val completed: Long, val total: Long) {
         val fraction: Float get() = if (total > 0) (completed.toFloat() / total).coerceIn(0f, 1f) else 0f

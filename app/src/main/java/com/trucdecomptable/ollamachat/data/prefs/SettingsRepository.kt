@@ -43,6 +43,8 @@ class SettingsRepository(private val context: Context) {
         val THINK_ENABLED = booleanPreferencesKey("think_enabled")
         val TOOLS_ENABLED = booleanPreferencesKey("tools_enabled")
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
+        val TURBO_ENABLED = booleanPreferencesKey("turbo_enabled")
+        val TURBO_MODEL = stringPreferencesKey("turbo_model")
     }
 
     val defaults = Defaults()
@@ -67,6 +69,8 @@ class SettingsRepository(private val context: Context) {
         val thinkEnabled: Boolean = false
         val toolsEnabled: Boolean = true
         val dynamicColor: Boolean = false
+        val turboEnabled: Boolean = false
+        val turboModel: String = ""
     }
 
     // --- flows ---
@@ -109,6 +113,10 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.data.map { it[Keys.TOOLS_ENABLED] ?: defaults.toolsEnabled }
     val dynamicColor: Flow<Boolean> =
         context.dataStore.data.map { it[Keys.DYNAMIC_COLOR] ?: defaults.dynamicColor }
+    val turboEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[Keys.TURBO_ENABLED] ?: defaults.turboEnabled }
+    val turboModel: Flow<String> =
+        context.dataStore.data.map { it[Keys.TURBO_MODEL] ?: defaults.turboModel }
     val mcpServers: Flow<List<McpServer>> =
         context.dataStore.data.map { parseMcpServers(it[Keys.MCP_SERVERS]) }
     val lockConfig: Flow<LockConfig> =
@@ -145,6 +153,8 @@ class SettingsRepository(private val context: Context) {
             thinkEnabled = p[Keys.THINK_ENABLED] ?: defaults.thinkEnabled,
             toolsEnabled = p[Keys.TOOLS_ENABLED] ?: defaults.toolsEnabled,
             dynamicColor = p[Keys.DYNAMIC_COLOR] ?: defaults.dynamicColor,
+            turboEnabled = p[Keys.TURBO_ENABLED] ?: defaults.turboEnabled,
+            turboModel = p[Keys.TURBO_MODEL] ?: defaults.turboModel,
         )
     }
 
@@ -169,6 +179,8 @@ class SettingsRepository(private val context: Context) {
     suspend fun setThinkEnabled(v: Boolean) = context.dataStore.edit { it[Keys.THINK_ENABLED] = v }
     suspend fun setToolsEnabled(v: Boolean) = context.dataStore.edit { it[Keys.TOOLS_ENABLED] = v }
     suspend fun setDynamicColor(v: Boolean) = context.dataStore.edit { it[Keys.DYNAMIC_COLOR] = v }
+    suspend fun setTurboEnabled(v: Boolean) = context.dataStore.edit { it[Keys.TURBO_ENABLED] = v }
+    suspend fun setTurboModel(v: String) = context.dataStore.edit { it[Keys.TURBO_MODEL] = v }
 
     /** Encrypted at rest with an Android Keystore key. */
     suspend fun setBraveApiKey(v: String) =
@@ -266,4 +278,6 @@ data class SettingsSnapshot(
     val thinkEnabled: Boolean,
     val toolsEnabled: Boolean,
     val dynamicColor: Boolean,
+    val turboEnabled: Boolean,
+    val turboModel: String,
 )

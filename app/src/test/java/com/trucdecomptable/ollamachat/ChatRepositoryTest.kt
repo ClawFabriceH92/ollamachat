@@ -15,6 +15,7 @@ import com.trucdecomptable.ollamachat.data.ollama.ToolCall
 import com.trucdecomptable.ollamachat.data.ollama.ToolDef
 import com.trucdecomptable.ollamachat.data.prefs.SettingsRepository
 import com.trucdecomptable.ollamachat.data.repo.ChatRepository
+import com.trucdecomptable.ollamachat.data.repo.TurboProfile
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -46,6 +47,11 @@ class ChatRepositoryTest {
 
         val requests = mutableListOf<List<OllamaChatMessage>>()
         val toolsOffered = mutableListOf<List<ToolDef>>()
+        val optionsSeen = mutableListOf<Map<String, Any>>()
+        val keepAliveSeen = mutableListOf<String?>()
+        val thinkSeen = mutableListOf<Boolean?>()
+        val modelsSeen = mutableListOf<String>()
+        var compactionRan = false
         var cancelled = false
         var onBeforeAnswer: (() -> Unit)? = null
 
@@ -65,6 +71,10 @@ class ChatRepositoryTest {
         ): ChatStreamResult {
             requests.add(messages)
             toolsOffered.add(tools)
+            optionsSeen.add(options)
+            keepAliveSeen.add(keepAlive)
+            thinkSeen.add(think)
+            modelsSeen.add(model)
             onBeforeAnswer?.invoke()
             val next = if (script.isEmpty()) ChatStreamResult("") else script.removeAt(0)
             if (next.fullText.isNotEmpty()) onDelta(next.fullText)
@@ -79,7 +89,10 @@ class ChatRepositoryTest {
             keepAlive: String?,
             tools: List<ToolDef>,
             think: Boolean?,
-        ): Result<String> = Result.success("Résumé des échanges précédents.")
+        ): Result<String> {
+            compactionRan = true
+            return Result.success("Résumé des échanges précédents.")
+        }
 
         override fun cancelActiveStream() {
             cancelled = true
@@ -105,6 +118,10 @@ class ChatRepositoryTest {
             settings.setNumCtx(8192)
             settings.setToolsEnabled(true)
             settings.setContextCompactEnabled(false)
+            settings.setThinkEnabled(false)
+            settings.setKeepAlive("5m")
+            settings.setTurboEnabled(false)
+            settings.setTurboModel("")
         }
     }
 
@@ -363,6 +380,98 @@ class ChatRepositoryTest {
         assertTrue(all.size >= before)
         assertTrue(all.any { it.excludedFromContext })
         assertTrue(all.any { it.content.startsWith("Contexte compacté") })
+    }
+
+    // --- turbo ---
+
+    private suspend fun seedLongHistory(id: Long, count: Int) {
+        repeat(count) { i ->
+            db.messageDao().insert(
+                Message(
+                    conversationId = id,
+                    role = if (i % 2 == 0) "user" else "assistant",
+                    content = "message $i",
+                )
+            )
+        }
+    }
+
+    @Test
+    fun `turbo drops tools, compaction and thinking, and holds the model in memory`() = runBlocking {
+        settings.setTurboEnabled(true)
+        settings.setContextCompactEnabled(true)
+        settings.setThinkEnabled(true)
+        settings.setNumCtx(2048)
+        val id = newConversation()
+        seedLongHistory(id, 30)
+
+        val client = FakeClient(
+            mutableListOf(ChatStreamResult("vite")),
+            capabilities = ModelCapabilities(tools = true, thinking = true),
+        )
+        send(repository(client), id)
+
+        assertTrue("des outils ont été proposés", client.toolsOffered.single().isEmpty())
+        assertFalse("la compaction a tourné", client.compactionRan)
+        assertEquals(false, client.thinkSeen.single())
+        assertEquals(TurboProfile.KEEP_ALIVE, client.keepAliveSeen.single())
+        assertEquals(TurboProfile.NUM_CTX, client.optionsSeen.single()["num_ctx"])
+        assertEquals(TurboProfile.NUM_PREDICT, client.optionsSeen.single()["num_predict"])
+    }
+
+    @Test
+    fun `turbo sends only the recent turns`() = runBlocking {
+        settings.setTurboEnabled(true)
+        val id = newConversation()
+        seedLongHistory(id, 30)
+
+        val client = FakeClient(mutableListOf(ChatStreamResult("vite")))
+        send(repository(client), id, "la question")
+
+        // One system prompt plus the trimmed history.
+        val sent = client.requests.single()
+        assertEquals(1 + TurboProfile.HISTORY_MESSAGES, sent.size)
+        // The message being answered always survives the trim.
+        assertEquals("la question", sent.last().content)
+    }
+
+    @Test
+    fun `turbo uses the dedicated model when one is set`() = runBlocking {
+        settings.setTurboEnabled(true)
+        settings.setTurboModel("qwen3:1.7b")
+        val id = newConversation()
+
+        val client = FakeClient(mutableListOf(ChatStreamResult("vite")))
+        send(repository(client), id)
+
+        assertEquals("qwen3:1.7b", client.modelsSeen.single())
+    }
+
+    @Test
+    fun `turbo falls back to the configured model when none is set`() = runBlocking {
+        settings.setTurboEnabled(true)
+        settings.setTurboModel("")
+        val id = newConversation()
+
+        val client = FakeClient(mutableListOf(ChatStreamResult("vite")))
+        send(repository(client), id)
+
+        assertEquals("qwen3", client.modelsSeen.single())
+    }
+
+    @Test
+    fun `turning turbo off restores the configured settings untouched`() = runBlocking {
+        settings.setTurboEnabled(false)
+        settings.setNumCtx(8192)
+        settings.setKeepAlive("5m")
+        val id = newConversation()
+
+        val client = FakeClient(mutableListOf(ChatStreamResult("normal")))
+        send(repository(client), id)
+
+        assertEquals(8192, client.optionsSeen.single()["num_ctx"])
+        assertEquals("5m", client.keepAliveSeen.single())
+        assertTrue(client.toolsOffered.single().isNotEmpty())
     }
 
     @Test
