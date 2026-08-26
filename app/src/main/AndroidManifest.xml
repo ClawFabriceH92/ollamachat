@@ -47,12 +47,5 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <receiver
-            android:name=".update.UpdateReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
-            </intent-filter>
-        </receiver>
     </application>
 </manifest>

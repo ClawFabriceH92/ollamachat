@@ -57,6 +57,15 @@ class UpdateCheckerVersionTest {
     }
 
     @Test
+    fun `a newer release is only newer than what is installed`() {
+        // The rolling tag is not a version; the title is.
+        val version = UpdateChecker.extractVersion("OllamaChat v1.6.0")!!
+        assertTrue(UpdateChecker.compareVersions(version, "1.5.0") > 0)
+        assertTrue(UpdateChecker.compareVersions(version, "1.6.0") == 0)
+        assertTrue(UpdateChecker.compareVersions(version, "1.7.0") < 0)
+    }
+
+    @Test
     fun `pickApk ignores non-apk assets and empty releases`() {
         val assets = JSONArray("""[{"name":"notes.txt","browser_download_url":"https://x/n.txt"}]""")
         assertNull(UpdateChecker.pickApk(assets, "1.3.0"))

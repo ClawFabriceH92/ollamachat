@@ -523,7 +523,16 @@ class ChatRepository(
     }
 
     suspend fun createConversation(systemPrompt: String? = null, model: String? = null): Long =
-        db.conversationDao().insert(Conversation(title = "", systemPrompt = systemPrompt, model = model))
+        db.conversationDao().insert(
+            Conversation(
+                title = "",
+                systemPrompt = systemPrompt,
+                model = model,
+                // New conversations inherit the configured default, so someone
+                // who wants everything ephemeral sets it once.
+                ephemeralMinutes = settings.defaultEphemeralMinutes.first(),
+            )
+        )
 
     /** Removes a conversation and the image files its messages referenced. */
     /**

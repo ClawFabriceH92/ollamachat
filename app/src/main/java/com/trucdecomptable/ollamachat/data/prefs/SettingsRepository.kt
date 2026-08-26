@@ -45,6 +45,8 @@ class SettingsRepository(private val context: Context) {
         val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
         val TURBO_ENABLED = booleanPreferencesKey("turbo_enabled")
         val TURBO_MODEL = stringPreferencesKey("turbo_model")
+        val SKIPPED_UPDATE = stringPreferencesKey("skipped_update")
+        val DEFAULT_EPHEMERAL = intPreferencesKey("default_ephemeral_minutes")
     }
 
     val defaults = Defaults()
@@ -71,6 +73,7 @@ class SettingsRepository(private val context: Context) {
         val dynamicColor: Boolean = false
         val turboEnabled: Boolean = false
         val turboModel: String = ""
+        val defaultEphemeralMinutes: Int = 0
     }
 
     // --- flows ---
@@ -117,6 +120,10 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.data.map { it[Keys.TURBO_ENABLED] ?: defaults.turboEnabled }
     val turboModel: Flow<String> =
         context.dataStore.data.map { it[Keys.TURBO_MODEL] ?: defaults.turboModel }
+    val skippedUpdate: Flow<String> =
+        context.dataStore.data.map { it[Keys.SKIPPED_UPDATE].orEmpty() }
+    val defaultEphemeralMinutes: Flow<Int> =
+        context.dataStore.data.map { it[Keys.DEFAULT_EPHEMERAL] ?: defaults.defaultEphemeralMinutes }
     val mcpServers: Flow<List<McpServer>> =
         context.dataStore.data.map { parseMcpServers(it[Keys.MCP_SERVERS]) }
     val lockConfig: Flow<LockConfig> =
@@ -155,6 +162,7 @@ class SettingsRepository(private val context: Context) {
             dynamicColor = p[Keys.DYNAMIC_COLOR] ?: defaults.dynamicColor,
             turboEnabled = p[Keys.TURBO_ENABLED] ?: defaults.turboEnabled,
             turboModel = p[Keys.TURBO_MODEL] ?: defaults.turboModel,
+            defaultEphemeralMinutes = p[Keys.DEFAULT_EPHEMERAL] ?: defaults.defaultEphemeralMinutes,
         )
     }
 
@@ -181,6 +189,8 @@ class SettingsRepository(private val context: Context) {
     suspend fun setDynamicColor(v: Boolean) = context.dataStore.edit { it[Keys.DYNAMIC_COLOR] = v }
     suspend fun setTurboEnabled(v: Boolean) = context.dataStore.edit { it[Keys.TURBO_ENABLED] = v }
     suspend fun setTurboModel(v: String) = context.dataStore.edit { it[Keys.TURBO_MODEL] = v }
+    suspend fun setSkippedUpdate(v: String) = context.dataStore.edit { it[Keys.SKIPPED_UPDATE] = v }
+    suspend fun setDefaultEphemeralMinutes(v: Int) = context.dataStore.edit { it[Keys.DEFAULT_EPHEMERAL] = v }
 
     /** Encrypted at rest with an Android Keystore key. */
     suspend fun setBraveApiKey(v: String) =
@@ -280,4 +290,5 @@ data class SettingsSnapshot(
     val dynamicColor: Boolean,
     val turboEnabled: Boolean,
     val turboModel: String,
+    val defaultEphemeralMinutes: Int,
 )
