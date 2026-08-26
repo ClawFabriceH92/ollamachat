@@ -120,6 +120,17 @@ jobs:
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
 
+      - name: Assert unit tests actually ran
+        run: |
+          python3 - <<'EOF'
+          import glob, sys, xml.etree.ElementTree as ET
+          files = glob.glob('app/build/test-results/**/*.xml', recursive=True)
+          total = sum(int(ET.parse(f).getroot().get('tests', 0)) for f in files)
+          print(f'{len(files)} classe(s) de test, {total} test(s) unitaires')
+          if total < 40:
+              sys.exit(f'Trop peu de tests exécutés ({total})')
+          EOF
+
       - name: Android Lint
         run: ./gradlew lintDebug --no-daemon
 

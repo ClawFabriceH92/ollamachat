@@ -60,9 +60,10 @@ android {
 
     buildTypes {
         release {
-            // Left off deliberately: R8 output cannot be exercised on a device
-            // from this build setup, and a stripped PDFBox would only show up
-            // as a crash in the user's hands.
+            // SQLCipher ships a native library per ABI; phones are ARM, so the
+            // x86 pair only bloats the download. Debug keeps them for the
+            // emulator that runs the instrumented tests.
+            ndk { abiFilters += setOf("arm64-v8a", "armeabi-v7a") }
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(
@@ -150,6 +151,9 @@ dependencies {
 
     // --- Network ---
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // --- Encrypted database ---
+    implementation("net.zetetic:sqlcipher-android:4.9.0")
 
     // --- PDF text extraction ---
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")

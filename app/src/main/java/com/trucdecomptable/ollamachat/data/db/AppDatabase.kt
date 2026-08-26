@@ -6,6 +6,10 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.trucdecomptable.ollamachat.security.DatabaseEncryption
+import com.trucdecomptable.ollamachat.security.DatabaseKey
+import com.trucdecomptable.ollamachat.util.DiagnosticLog
+import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 @Database(
     entities = [Conversation::class, Message::class, Memory::class],
@@ -59,14 +63,32 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase =
             instance ?: synchronized(this) {
-                instance ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "ollamachat.db",
-                )
+                instance ?: build(context.applicationContext).also { instance = it }
+            }
+
+        /**
+         * The database is encrypted at rest: a PIN that only guards the screen
+         * leaves every conversation readable to anything that can reach app
+         * storage.
+         */
+        private fun build(context: Context): AppDatabase {
+            val encrypted = runCatching {
+                System.loadLibrary("sqlcipher")
+                val passphrase = DatabaseKey.get(context)
+                DatabaseEncryption.ensureEncrypted(context, passphrase)
+                Room.databaseBuilder(context, AppDatabase::class.java, DatabaseEncryption.ENCRYPTED_NAME)
+                    .openHelperFactory(SupportOpenHelperFactory(passphrase))
                     .addMigrations(*MIGRATIONS)
                     .build()
-                    .also { instance = it }
             }
+            encrypted.getOrNull()?.let { return it }
+
+            // No SQLCipher for this ABI, or the Keystore refused: the app still
+            // has to open, so fall back to the plaintext file it used before.
+            encrypted.exceptionOrNull()?.let { DiagnosticLog.record("db/open", it) }
+            return Room.databaseBuilder(context, AppDatabase::class.java, DatabaseEncryption.PLAIN_NAME)
+                .addMigrations(*MIGRATIONS)
+                .build()
+        }
     }
 }
