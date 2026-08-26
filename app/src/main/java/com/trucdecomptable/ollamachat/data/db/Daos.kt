@@ -113,10 +113,10 @@ interface MessageDao {
     suspend fun deleteFrom(conversationId: Long, fromId: Long)
 
     @Query("SELECT imagePath FROM messages WHERE conversationId = :conversationId AND imagePath IS NOT NULL")
-    suspend fun imagePathsFor(conversationId: Long): List<String>
+    suspend fun imagePathsFor(conversationId: Long): List<String?>
 
     @Query("SELECT imagePath FROM messages WHERE imagePath IS NOT NULL")
-    suspend fun allImagePaths(): List<String>
+    suspend fun allImagePaths(): List<String?>
 }
 
 @Dao

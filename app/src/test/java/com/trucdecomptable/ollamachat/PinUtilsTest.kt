@@ -1,6 +1,6 @@
 package com.trucdecomptable.ollamachat
 
-import com.trucdecomptable.ollamachat.data.prefs.SettingsRepository
+import com.trucdecomptable.ollamachat.data.prefs.LockoutPolicy
 import com.trucdecomptable.ollamachat.util.PinUtils
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -51,11 +51,11 @@ class PinUtilsTest {
 
     @Test
     fun `lockout grows after the free attempts and is capped`() {
-        assertEquals(0L, SettingsRepository.lockoutMillis(1))
-        assertEquals(0L, SettingsRepository.lockoutMillis(SettingsRepository.FREE_ATTEMPTS))
-        assertEquals(5_000L, SettingsRepository.lockoutMillis(SettingsRepository.FREE_ATTEMPTS + 1))
-        assertEquals(10_000L, SettingsRepository.lockoutMillis(SettingsRepository.FREE_ATTEMPTS + 2))
-        assertEquals(20_000L, SettingsRepository.lockoutMillis(SettingsRepository.FREE_ATTEMPTS + 3))
-        assertEquals(5 * 60_000L, SettingsRepository.lockoutMillis(50))
+        assertEquals(0L, LockoutPolicy.lockoutMillis(1))
+        assertEquals(0L, LockoutPolicy.lockoutMillis(LockoutPolicy.FREE_ATTEMPTS))
+        assertEquals(5_000L, LockoutPolicy.lockoutMillis(LockoutPolicy.FREE_ATTEMPTS + 1))
+        assertEquals(10_000L, LockoutPolicy.lockoutMillis(LockoutPolicy.FREE_ATTEMPTS + 2))
+        assertEquals(20_000L, LockoutPolicy.lockoutMillis(LockoutPolicy.FREE_ATTEMPTS + 3))
+        assertEquals(5 * 60_000L, LockoutPolicy.lockoutMillis(50))
     }
 }

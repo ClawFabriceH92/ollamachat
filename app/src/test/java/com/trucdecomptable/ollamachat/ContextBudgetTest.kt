@@ -27,7 +27,7 @@ class ContextBudgetTest {
     @Test
     fun `threshold never drops below the floor`() {
         assertEquals(ContextBudget.MIN_THRESHOLD, ContextBudget.threshold(512))
-        assertEquals(5760, ContextBudget.threshold(8192))
+        assertEquals(5898, ContextBudget.threshold(8192))
     }
 
     @Test

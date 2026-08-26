@@ -179,7 +179,7 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { p ->
             val attempts = (p[Keys.LOCK_FAILED_ATTEMPTS] ?: 0) + 1
             p[Keys.LOCK_FAILED_ATTEMPTS] = attempts
-            until = System.currentTimeMillis() + lockoutMillis(attempts)
+            until = System.currentTimeMillis() + LockoutPolicy.lockoutMillis(attempts)
             p[Keys.LOCK_UNTIL] = until
         }
         return until
@@ -190,22 +190,6 @@ class SettingsRepository(private val context: Context) {
         p[Keys.LOCK_UNTIL] = 0L
     }
 
-    companion object {
-        /**
-         * Free tries up to [FREE_ATTEMPTS], then a doubling delay capped at
-         * five minutes — a 4-digit PIN is only 10 000 candidates, so unlimited
-         * retries make the lock decorative.
-         */
-        const val FREE_ATTEMPTS = 4
-        private const val MAX_LOCKOUT_MS = 5 * 60_000L
-
-        fun lockoutMillis(attempts: Int): Long {
-            if (attempts <= FREE_ATTEMPTS) return 0L
-            val step = attempts - FREE_ATTEMPTS      // 1, 2, 3, …
-            val millis = 5_000L shl (step - 1).coerceAtMost(10)
-            return millis.coerceAtMost(MAX_LOCKOUT_MS)
-        }
-    }
 }
 
 /** A configured MCP server (name + streamable HTTP endpoint). */
