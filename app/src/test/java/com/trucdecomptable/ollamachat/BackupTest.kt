@@ -101,7 +101,7 @@ class BackupArchiveTest {
                 role = "user",
                 content = "Bonjour « accentué »",
                 contentType = "image",
-                imageName = "photo.jpg",
+                imageNames = listOf("photo.jpg"),
                 createdAt = 3,
                 stats = null,
                 thinking = "hmm",
@@ -123,12 +123,31 @@ class BackupArchiveTest {
         assertNull(back.conversations[0].systemPrompt)
 
         assertEquals("Bonjour « accentué »", back.messages[0].content)
-        assertEquals("photo.jpg", back.messages[0].imageName)
+        assertEquals(listOf("photo.jpg"), back.messages[0].imageNames)
         assertEquals("hmm", back.messages[0].thinking)
         assertTrue(back.messages[0].excludedFromContext)
 
         assertEquals("aime le café", back.memories[0].content)
         assertArrayEquals(byteArrayOf(1, 2, 3), restored["photo.jpg"])
+    }
+
+    @Test
+    fun `an archive written before multi-image support still reads`() {
+        // Older exports carry a single "imageName"; both shapes must decode.
+        val json = BackupArchive.encode(payload())
+            .replace("\"imageNames\":[\"photo.jpg\"]", "\"imageName\":\"photo.jpg\"")
+        assertEquals(listOf("photo.jpg"), BackupArchive.decode(json).messages[0].imageNames)
+    }
+
+    @Test
+    fun `a message with several images round trips`() {
+        val many = payload().let { base ->
+            base.copy(messages = listOf(base.messages[0].copy(imageNames = listOf("a.jpg", "b.jpg"))))
+        }
+        val (back, _) = BackupArchive.read(
+            BackupArchive.write(many, mapOf("a.jpg" to byteArrayOf(1), "b.jpg" to byteArrayOf(2)))
+        )
+        assertEquals(listOf("a.jpg", "b.jpg"), back.messages[0].imageNames)
     }
 
     @Test
