@@ -1,18 +1,23 @@
 package com.trucdecomptable.ollamachat.data.ollama
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.Call
-import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Thin HTTP client for the Ollama REST API.
@@ -21,11 +26,15 @@ import java.util.concurrent.TimeUnit
  *  - GET  {base}/api/version         -> connectivity check
  *  - GET  {base}/api/tags            -> list installed models
  *  - POST {base}/api/chat            -> chat (streaming NDJSON, tools, stats)
- *  - GET  {base}/api/show            -> model capabilities (vision)
+ *  - POST {base}/api/show            -> model capabilities (vision, tools)
  */
 class OllamaClient(
     private val http: OkHttpClient = defaultClient(),
+    private val streamHttp: OkHttpClient = sharedStreamClient(),
 ) {
+    /** The streaming call in flight, so [cancelActiveStream] can really stop it. */
+    private val activeCall = AtomicReference<Call?>(null)
+
     companion object {
         private const val JSON = "application/json; charset=utf-8"
 
@@ -35,11 +44,19 @@ class OllamaClient(
             .callTimeout(20, TimeUnit.SECONDS)
             .build()
 
-        /** Streaming client: long read timeout, no overall call timeout. */
-        fun streamClient(): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(180, TimeUnit.SECONDS)
-            .build()
+        /**
+         * Streaming client: long read timeout, no overall call timeout.
+         * Built once — a fresh OkHttpClient per message means a new connection
+         * pool and dispatcher every time, and no connection reuse at all.
+         */
+        private val streamClientInstance: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(300, TimeUnit.SECONDS)
+                .build()
+        }
+
+        fun sharedStreamClient(): OkHttpClient = streamClientInstance
 
         fun normalizeBaseUrl(raw: String): String {
             var url = raw.trim().trimEnd('/')
@@ -79,7 +96,9 @@ class OllamaClient(
                 val body = resp.body?.string() ?: return@withContext Result.failure(IOException("Empty body"))
                 val json = JSONObject(body)
                 val arr = json.optJSONArray("models") ?: JSONArray()
-                val models = (0 until arr.length()).map { ModelInfo.fromJson(arr.getJSONObject(it)) }
+                val models = (0 until arr.length())
+                    .map { ModelInfo.fromJson(arr.getJSONObject(it)) }
+                    .filter { it.name.isNotBlank() }
                 Result.success(models)
             }
         } catch (e: Exception) {
@@ -87,7 +106,7 @@ class OllamaClient(
         }
     }
 
-    /** Fetch model capabilities (vision support) via /api/show. */
+    /** Fetch model capabilities (vision / tool calling / reasoning) via /api/show. */
     suspend fun modelCapabilities(baseUrl: String, model: String): Result<ModelCapabilities> =
         withContext(Dispatchers.IO) {
             try {
@@ -98,20 +117,25 @@ class OllamaClient(
                     .build()
                 http.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@withContext Result.failure(IOException("HTTP ${resp.code}"))
-                    val json = JSONObject(resp.body?.string() ?: "{}")
-                    val capabilities = json.optJSONArray("capabilities") ?: JSONArray()
-                    val vision = (0 until capabilities.length()).any { capabilities.getString(it) == "vision" }
-                    Result.success(ModelCapabilities(vision = vision))
+                    Result.success(parseCapabilities(resp.body?.string() ?: "{}"))
                 }
             } catch (e: Exception) {
                 Result.failure(e)
             }
         }
 
+    /** Stops the streaming call in flight; the partial answer is still returned. */
+    fun cancelActiveStream() {
+        activeCall.getAndSet(null)?.cancel()
+    }
+
     /**
      * Stream a chat completion. Calls [onDelta] for each content piece as it
-     * arrives. Supports optional [tools] (tool calling); the final chunk's
-     * tool_calls and generation stats (tok/s) are returned in the result.
+     * arrives and [onThinking] for reasoning tokens. Supports optional [tools];
+     * tool calls and generation stats (tok/s) come back in the result.
+     *
+     * On [cancelActiveStream] the result carries `cancelled = true` together
+     * with everything generated so far.
      */
     suspend fun chatStream(
         baseUrl: String,
@@ -122,6 +146,7 @@ class OllamaClient(
         tools: List<ToolDef> = emptyList(),
         think: Boolean? = null,
         onDelta: (String) -> Unit = {},
+        onThinking: (String) -> Unit = {},
     ): ChatStreamResult = withContext(Dispatchers.IO) {
         val payload = buildChatPayload(model, messages, options, keepAlive, tools, stream = true, think = think)
         val req = Request.Builder()
@@ -129,64 +154,104 @@ class OllamaClient(
             .post(payload.toString().toRequestBody(JSON.toMediaType()))
             .build()
 
+        val call = streamHttp.newCall(req)
+        activeCall.set(call)
+        // If the whole scope dies, close the socket instead of letting the
+        // server keep generating tokens for a screen nobody is watching.
+        val cancelBridge = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
+
+        val text = StringBuilder()
+        val reasoning = StringBuilder()
         try {
-            streamClient().newCall(req).execute().use { resp ->
+            call.execute().use { resp ->
                 if (!resp.isSuccessful) {
-                    val err = resp.body?.string()?.let { extractError(it) } ?: "HTTP ${resp.code}"
-                    return@withContext ChatStreamResult(fullText = "", error = err)
+                    val detail = resp.body?.string()?.let { extractError(it) }
+                    return@withContext ChatStreamResult(
+                        fullText = "",
+                        error = if (detail.isNullOrBlank()) ChatError(ChatErrorCode.HTTP, "HTTP ${resp.code}")
+                        else ChatError(ChatErrorCode.SERVER, detail),
+                    )
                 }
                 val source = resp.body?.source()
-                    ?: return@withContext ChatStreamResult(fullText = "", error = "Corps vide")
-                val sb = StringBuilder()
+                    ?: return@withContext ChatStreamResult("", error = ChatError(ChatErrorCode.EMPTY))
+
                 var toolCalls: List<ToolCall> = emptyList()
                 var evalCount: Int? = null
                 var evalDurationNs: Long? = null
                 var promptEvalCount: Int? = null
-                while (!source.exhausted()) {
+
+                while (isActive && !call.isCanceled() && !source.exhausted()) {
                     val line = source.readUtf8Line() ?: break
                     if (line.isBlank()) continue
-                    val chunk = parseChunk(line)
+                    val json = try {
+                        JSONObject(line)
+                    } catch (_: Exception) {
+                        continue
+                    }
+                    val chunk = parseChunk(json)
                     if (chunk.error != null) {
-                        return@withContext ChatStreamResult(sb.toString(), error = chunk.error)
+                        return@withContext ChatStreamResult(
+                            text.toString(),
+                            thinking = reasoning.toString(),
+                            error = ChatError(ChatErrorCode.SERVER, chunk.error),
+                        )
                     }
                     if (chunk.content.isNotEmpty()) {
-                        sb.append(chunk.content)
+                        text.append(chunk.content)
                         onDelta(chunk.content)
+                    }
+                    if (chunk.thinking.isNotEmpty()) {
+                        reasoning.append(chunk.thinking)
+                        onThinking(chunk.thinking)
                     }
                     // Tool calls arrive in the FIRST chunk (done=false) in
                     // streaming mode — parse them on every line.
-                    try {
-                        JSONObject(line).optJSONObject("message")?.let { msg ->
-                            val calls = parseToolCalls(msg.optJSONArray("tool_calls"))
-                            if (calls.isNotEmpty()) toolCalls = calls
-                        }
-                    } catch (_: Exception) {
+                    json.optJSONObject("message")?.let { msg ->
+                        val calls = parseToolCalls(msg.optJSONArray("tool_calls"))
+                        if (calls.isNotEmpty()) toolCalls = calls
                     }
                     if (chunk.done) {
-                        // Final chunk carries the generation stats.
-                        try {
-                            val finalJson = JSONObject(line)
-                            evalCount = if (finalJson.has("eval_count")) finalJson.getInt("eval_count") else null
-                            evalDurationNs = if (finalJson.has("eval_duration")) finalJson.getLong("eval_duration") else null
-                            promptEvalCount = if (finalJson.has("prompt_eval_count")) finalJson.getInt("prompt_eval_count") else null
-                        } catch (_: Exception) {
-                        }
+                        evalCount = if (json.has("eval_count")) json.optInt("eval_count") else null
+                        evalDurationNs = if (json.has("eval_duration")) json.optLong("eval_duration") else null
+                        promptEvalCount =
+                            if (json.has("prompt_eval_count")) json.optInt("prompt_eval_count") else null
                         break
                     }
                 }
-                val tps = if (evalCount != null && evalDurationNs != null && evalDurationNs!! > 0) {
-                    evalCount!! / (evalDurationNs!! / 1e9)
+
+                if (call.isCanceled()) {
+                    return@withContext ChatStreamResult(
+                        text.toString(),
+                        thinking = reasoning.toString(),
+                        cancelled = true,
+                    )
+                }
+
+                val duration = evalDurationNs
+                val count = evalCount
+                val tps = if (count != null && duration != null && duration > 0) {
+                    count / (duration / 1e9)
                 } else null
                 ChatStreamResult(
-                    fullText = sb.toString(),
+                    fullText = text.toString(),
+                    thinking = reasoning.toString(),
                     toolCalls = toolCalls,
                     tokPerSec = tps,
-                    evalCount = evalCount,
+                    evalCount = count,
                     promptEvalCount = promptEvalCount,
                 )
             }
+        } catch (e: IOException) {
+            if (call.isCanceled()) {
+                ChatStreamResult(text.toString(), thinking = reasoning.toString(), cancelled = true)
+            } else {
+                ChatStreamResult(text.toString(), thinking = reasoning.toString(), error = classify(e))
+            }
         } catch (e: Exception) {
-            ChatStreamResult(fullText = "", error = e.message ?: "Erreur réseau")
+            ChatStreamResult(text.toString(), thinking = reasoning.toString(), error = classify(e))
+        } finally {
+            cancelBridge?.dispose()
+            activeCall.compareAndSet(call, null)
         }
     }
 
@@ -209,21 +274,23 @@ class OllamaClient(
                 .url("${normalizeBaseUrl(baseUrl)}/api/chat")
                 .post(payload.toString().toRequestBody(JSON.toMediaType()))
                 .build()
-            http.newCall(req).execute().use { resp ->
+            // Summarizing a long history can take a while: use the streaming
+            // client's generous read timeout rather than the 20 s call budget.
+            streamHttp.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
                     return@withContext Result.failure(IOException("HTTP ${resp.code}"))
                 }
                 val json = JSONObject(resp.body?.string() ?: "{}")
-                val text = json.optJSONObject("message")?.optString("content", "")
-                    ?: return@withContext Result.failure(IOException("Réponse vide"))
-                Result.success(text)
+                val text = json.optJSONObject("message")?.optString("content", "").orEmpty()
+                if (text.isBlank()) Result.failure(IOException("Empty response"))
+                else Result.success(text)
             }
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    private fun buildChatPayload(
+    internal fun buildChatPayload(
         model: String,
         messages: List<OllamaChatMessage>,
         options: Map<String, Any>,
@@ -243,6 +310,7 @@ class OllamaClient(
                 JSONObject().apply {
                     put("role", m.role)
                     put("content", m.content)
+                    m.toolName?.let { put("tool_name", it) }
                     if (m.images.isNotEmpty()) {
                         put("images", JSONArray(m.images))
                     }
@@ -254,7 +322,7 @@ class OllamaClient(
                                     put(
                                         "function", JSONObject().apply {
                                             put("name", tc.name)
-                                            put("arguments", JSONObject(tc.arguments))
+                                            put("arguments", safeArguments(tc.arguments))
                                         }
                                     )
                                 }
@@ -278,7 +346,7 @@ class OllamaClient(
                             "function", JSONObject().apply {
                                 put("name", t.name)
                                 put("description", t.description)
-                                put("parameters", JSONObject(t.parametersJson))
+                                put("parameters", safeArguments(t.parametersJson))
                             }
                         )
                     }
@@ -288,32 +356,59 @@ class OllamaClient(
         }
     }
 
-    private fun extractError(body: String): String = try {
-        JSONObject(body).optString("error", "HTTP ${JSONObject(body).optString("status", "")}")
+    private fun safeArguments(json: String): JSONObject = try {
+        JSONObject(json)
     } catch (_: Exception) {
-        "Réponse serveur invalide"
+        JSONObject()
     }
 
-    private fun parseChunk(line: String): OllamaChatChunk = try {
-        val json = JSONObject(line)
-        OllamaChatChunk(
-            done = json.optBoolean("done", false),
-            content = json.optJSONObject("message")?.optString("content", "") ?: "",
-            error = if (json.has("error")) json.optString("error") else null,
+    internal fun parseCapabilities(body: String): ModelCapabilities = try {
+        val json = JSONObject(body)
+        val arr = json.optJSONArray("capabilities") ?: JSONArray()
+        val names = (0 until arr.length()).map { arr.optString(it, "").lowercase() }
+        ModelCapabilities(
+            vision = names.contains("vision"),
+            tools = names.contains("tools"),
+            thinking = names.contains("thinking"),
         )
     } catch (_: Exception) {
-        OllamaChatChunk(done = false, content = "")
+        ModelCapabilities()
     }
 
-    private fun parseToolCalls(arr: JSONArray?): List<ToolCall> {
+    private fun classify(e: Exception): ChatError = when (e) {
+        is SocketTimeoutException -> ChatError(ChatErrorCode.TIMEOUT)
+        is ConnectException, is UnknownHostException -> ChatError(ChatErrorCode.CONNECTION)
+        else -> ChatError(ChatErrorCode.UNKNOWN, e.message)
+    }
+
+    private fun extractError(body: String): String? = try {
+        JSONObject(body).optString("error", "").ifBlank { null }
+    } catch (_: Exception) {
+        body.take(200).ifBlank { null }
+    }
+
+    internal fun parseChunk(json: JSONObject): OllamaChatChunk {
+        val message = json.optJSONObject("message")
+        return OllamaChatChunk(
+            done = json.optBoolean("done", false),
+            content = message?.optString("content", "").orEmpty(),
+            thinking = message?.optString("thinking", "").orEmpty(),
+            error = if (json.has("error")) json.optString("error").ifBlank { null } else null,
+        )
+    }
+
+    internal fun parseToolCalls(arr: JSONArray?): List<ToolCall> {
         if (arr == null) return emptyList()
         return (0 until arr.length()).mapNotNull { i ->
             try {
                 val call = arr.getJSONObject(i)
                 val fn = call.optJSONObject("function") ?: return@mapNotNull null
+                val name = fn.optString("name", "")
+                if (name.isBlank()) return@mapNotNull null
                 ToolCall(
-                    name = fn.optString("name", ""),
-                    arguments = fn.optJSONObject("arguments")?.toString() ?: "{}",
+                    name = name,
+                    arguments = fn.optJSONObject("arguments")?.toString()
+                        ?: fn.optString("arguments", "").ifBlank { "{}" },
                 )
             } catch (_: Exception) {
                 null

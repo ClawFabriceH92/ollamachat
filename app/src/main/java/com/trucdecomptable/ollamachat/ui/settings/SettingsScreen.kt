@@ -9,14 +9,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -44,10 +49,17 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.trucdecomptable.ollamachat.OllamaChatApp
+import com.trucdecomptable.ollamachat.R
+import com.trucdecomptable.ollamachat.util.PinUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,14 +70,18 @@ fun SettingsScreen(
     val state by vm.uiState.collectAsState()
     var showPinDialog by remember { mutableStateOf(false) }
     var showMcpDialog by remember { mutableStateOf(false) }
+    var showKey by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Réglages") },
+                title = { Text(stringResource(R.string.settings_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.action_back),
+                        )
                     }
                 },
             )
@@ -79,14 +95,14 @@ fun SettingsScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            SectionTitle("Connexion")
+            SectionTitle(stringResource(R.string.settings_section_connection))
 
             OutlinedTextField(
                 value = state.baseUrl,
                 onValueChange = vm::onBaseUrlChange,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Adresse du serveur Ollama") },
-                placeholder = { Text("http://192.168.1.50:11434") },
+                label = { Text(stringResource(R.string.settings_server_url)) },
+                placeholder = { Text(stringResource(R.string.settings_server_url_hint)) },
                 singleLine = true,
             )
             OutlinedButton(
@@ -95,18 +111,18 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 if (state.scanning) {
-                    CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
-                    Text("Scan du réseau en cours…")
+                    Text(stringResource(R.string.settings_scanning))
                 } else {
                     Icon(Icons.Filled.Search, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Détecter automatiquement un serveur Ollama")
+                    Text(stringResource(R.string.settings_scan))
                 }
             }
             state.scanResults.forEach { result ->
                 Text(
-                    text = "🖥️ ${result.baseUrl}" + (result.version?.let { "  (v$it)" } ?: ""),
+                    text = result.baseUrl + (result.version?.let { " (v$it)" } ?: ""),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
@@ -117,34 +133,38 @@ fun SettingsScreen(
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Button(
-                    onClick = { vm.testConnection(state.baseUrl) },
-                    enabled = !state.testing,
-                ) {
+                Button(onClick = { vm.testConnection(state.baseUrl) }, enabled = !state.testing) {
                     if (state.testing) {
-                        CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp)
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(8.dp))
                     }
-                    Text(if (state.testing) "Test…" else "Tester la connexion")
+                    Text(
+                        stringResource(
+                            if (state.testing) R.string.settings_testing else R.string.settings_test
+                        )
+                    )
                 }
                 Spacer(Modifier.width(12.dp))
-                when {
-                    state.testOk == true -> {
-                        Icon(Icons.Filled.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                when (state.testOk) {
+                    true -> {
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            state.testResult.orEmpty(),
+                            stringResource(R.string.settings_test_ok),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary,
                         )
                     }
-                    state.testOk == false -> {
-                        Text(
-                            state.testResult.orEmpty(),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
+                    false -> Text(
+                        stringResource(R.string.settings_test_failed, state.testResult.orEmpty()),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    null -> Unit
                 }
             }
 
@@ -156,75 +176,85 @@ fun SettingsScreen(
             )
 
             HorizontalDivider()
-            SectionTitle("Recherche web (pour répondre avec des infos à jour)")
+            SectionTitle(stringResource(R.string.settings_section_web))
             OutlinedTextField(
                 value = state.braveApiKey,
                 onValueChange = vm::onBraveApiKeyChange,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Clé API Brave (optionnel)") },
-                placeholder = { Text("Sans clé : recherche Wikipedia seulement") },
+                label = { Text(stringResource(R.string.settings_brave_key)) },
+                placeholder = { Text(stringResource(R.string.settings_brave_key_hint)) },
                 singleLine = true,
+                // An API key should not sit in plain sight on screen.
+                visualTransformation = if (showKey) VisualTransformation.None
+                else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { showKey = !showKey }) {
+                        Icon(
+                            if (showKey) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                            contentDescription = stringResource(
+                                if (showKey) R.string.settings_hide_key else R.string.settings_show_key
+                            ),
+                        )
+                    }
+                },
             )
-            Text(
-                text = "Clé gratuite sur api.search.brave.com (2000 req/mois). Le bouton 🔍 cherche sur le web et injecte les résultats au modèle.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Hint(stringResource(R.string.settings_brave_help))
 
             HorizontalDivider()
-            SectionTitle("Génération")
+            SectionTitle(stringResource(R.string.settings_section_generation))
 
             SliderField(
-                label = "Température",
+                label = stringResource(R.string.settings_temperature),
                 value = state.temperature,
                 range = 0.0..2.0,
                 display = { "%.2f".format(it) },
                 onChange = vm::onTemperatureChange,
             )
             SliderField(
-                label = "top_p",
+                label = stringResource(R.string.settings_top_p),
                 value = state.topP,
                 range = 0.0..1.0,
                 display = { "%.2f".format(it) },
                 onChange = vm::onTopPChange,
             )
-            IntField("top_k", state.topK, vm::onTopKChange)
-            IntField("Max tokens (num_predict)", state.numPredict, vm::onNumPredictChange)
-            IntField("Contexte (num_ctx)", state.numCtx, vm::onNumCtxChange)
+            IntField(stringResource(R.string.settings_top_k), state.topK, vm::onTopKChange)
+            IntField(stringResource(R.string.settings_num_predict), state.numPredict, vm::onNumPredictChange)
+            IntField(stringResource(R.string.settings_num_ctx), state.numCtx, vm::onNumCtxChange)
             OutlinedTextField(
                 value = state.keepAlive,
                 onValueChange = vm::onKeepAliveChange,
-                label = { Text("Keep alive (ex. 5m, -1 = toujours)") },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(stringResource(R.string.settings_keep_alive)) },
                 singleLine = true,
             )
             SwitchRow(
-                label = "Streaming (réponse en direct)",
+                label = stringResource(R.string.settings_streaming),
                 checked = state.streaming,
                 onChange = vm::onStreamingChange,
             )
             SwitchRow(
-                label = "Compacter automatiquement le contexte (résumé quand il est plein)",
+                label = stringResource(R.string.settings_compact),
                 checked = state.contextCompactEnabled,
                 onChange = vm::onContextCompactEnabledChange,
             )
+            Hint(stringResource(R.string.settings_compact_help))
             SwitchRow(
-                label = "Mode réfléchi (plus profond mais réponse plus lente)",
+                label = stringResource(R.string.settings_think),
                 checked = state.thinkEnabled,
                 onChange = vm::onThinkEnabledChange,
             )
-            Text(
-                text = "Désactivé par défaut : réponse immédiate (recommandé pour un chat fluide). À activer pour les questions complexes.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Hint(stringResource(R.string.settings_think_help))
+            SwitchRow(
+                label = stringResource(R.string.settings_tools),
+                checked = state.toolsEnabled,
+                onChange = vm::onToolsEnabledChange,
             )
+            Hint(stringResource(R.string.settings_tools_help))
 
             HorizontalDivider()
-            SectionTitle("Serveurs MCP (outils externes)")
+            SectionTitle(stringResource(R.string.settings_section_mcp))
             state.mcpServers.forEach { server ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(server.name, fontWeight = FontWeight.SemiBold)
                         Text(
@@ -236,23 +266,19 @@ fun SettingsScreen(
                     IconButton(onClick = { vm.removeMcpServer(server) }) {
                         Icon(
                             Icons.Filled.Delete,
-                            contentDescription = "Supprimer",
+                            contentDescription = stringResource(R.string.action_delete),
                             tint = MaterialTheme.colorScheme.error,
                         )
                     }
                 }
             }
             TextButton(onClick = { showMcpDialog = true }) {
-                Text("Ajouter un serveur MCP")
+                Text(stringResource(R.string.settings_mcp_add))
             }
-            Text(
-                text = "Le modèle pourra utiliser les outils des serveurs MCP (protocole streamable HTTP, ex. http://IP:PORT/mcp).",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Hint(stringResource(R.string.settings_mcp_help))
 
             HorizontalDivider()
-            SectionTitle("Prompt système par défaut")
+            SectionTitle(stringResource(R.string.settings_section_prompt))
             OutlinedTextField(
                 value = state.defaultSystemPrompt,
                 onValueChange = vm::onSystemPromptChange,
@@ -261,31 +287,32 @@ fun SettingsScreen(
             )
 
             HorizontalDivider()
-            SectionTitle("Apparence")
+            SectionTitle(stringResource(R.string.settings_section_appearance))
             ThemeDropdown(selected = state.theme, onSelect = vm::onThemeChange)
 
             HorizontalDivider()
-            SectionTitle("Sécurité")
+            SectionTitle(stringResource(R.string.settings_section_security))
             SwitchRow(
-                label = "Verrouiller l'app (PIN ou biométrie)",
+                label = stringResource(R.string.settings_lock),
                 checked = state.lockEnabled,
                 onChange = vm::onLockEnabledChange,
             )
             if (state.lockEnabled) {
                 SwitchRow(
-                    label = "Verrouiller à la mise en arrière-plan",
+                    label = stringResource(R.string.settings_lock_background),
                     checked = state.lockOnBackground,
                     onChange = vm::onLockOnBackgroundChange,
                 )
-                TextButton(onClick = { showPinDialog = true }) {
-                    Text("Changer le PIN")
-                }
             }
-            Text(
-                text = "PIN par défaut : 0000",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            TextButton(onClick = { showPinDialog = true }) {
+                Text(
+                    stringResource(
+                        if (state.hasPin) R.string.settings_change_pin else R.string.settings_set_pin
+                    )
+                )
+            }
+            if (!state.hasPin) Hint(stringResource(R.string.settings_lock_needs_pin))
+            Hint(stringResource(R.string.settings_security_help))
 
             Spacer(Modifier.height(24.dp))
         }
@@ -293,12 +320,13 @@ fun SettingsScreen(
 
     if (showPinDialog) {
         PinChangeDialog(
-            onDismiss = { showPinDialog = false },
-            onConfirm = { old, new ->
-                vm.changePin(old, new)
+            requiresOldPin = state.hasPin,
+            message = state.pinMessage?.let { stringResource(it.resId) },
+            onDismiss = {
                 showPinDialog = false
+                vm.consumePinMessage()
             },
-            message = state.pinMessage,
+            onConfirm = { old, new, confirm -> vm.changePin(old, new, confirm) },
         )
     }
 
@@ -314,38 +342,35 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun McpServerDialog(
-    onDismiss: () -> Unit,
-    onAdd: (name: String, url: String) -> Unit,
-) {
+private fun McpServerDialog(onDismiss: () -> Unit, onAdd: (name: String, url: String) -> Unit) {
     var name by rememberSaveable { mutableStateOf("") }
     var url by rememberSaveable { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Ajouter un serveur MCP") },
+        title = { Text(stringResource(R.string.settings_mcp_add)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Nom (ex. météo)") },
+                    label = { Text(stringResource(R.string.settings_mcp_name)) },
                     singleLine = true,
                 )
                 OutlinedTextField(
                     value = url,
                     onValueChange = { url = it },
-                    label = { Text("URL du serveur (ex. http://192.168.0.50:8000/mcp)") },
+                    label = { Text(stringResource(R.string.settings_mcp_url)) },
                     singleLine = true,
                 )
             }
         },
         confirmButton = {
             TextButton(onClick = { onAdd(name, url) }, enabled = name.isNotBlank() && url.isNotBlank()) {
-                Text("Ajouter")
+                Text(stringResource(R.string.action_add))
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Annuler") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         },
     )
 }
@@ -357,6 +382,15 @@ private fun SectionTitle(text: String) {
         style = MaterialTheme.typography.titleSmall,
         fontWeight = FontWeight.Bold,
         color = MaterialTheme.colorScheme.primary,
+    )
+}
+
+@Composable
+private fun Hint(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
@@ -374,23 +408,23 @@ private fun ModelDropdown(
             value = selected,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Modèle") },
+            label = { Text(stringResource(R.string.settings_model)) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier.menuAnchor().fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             models.forEach { m ->
-                DropdownMenuItem(
-                    text = { Text(m) },
-                    onClick = { onSelect(m); expanded = false },
-                )
+                DropdownMenuItem(text = { Text(m) }, onClick = { onSelect(m); expanded = false })
             }
             if (models.isEmpty()) {
-                DropdownMenuItem(text = { Text("Aucun modèle — tester la connexion") }, onClick = { expanded = false })
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.settings_model_empty)) },
+                    onClick = { expanded = false },
+                )
             }
         }
     }
-    TextButton(onClick = onRefresh) { Text("Rafraîchir la liste des modèles") }
+    TextButton(onClick = onRefresh) { Text(stringResource(R.string.settings_model_refresh)) }
 }
 
 @Composable
@@ -406,7 +440,7 @@ private fun SliderField(
             Text(label, style = MaterialTheme.typography.bodyMedium)
             Text(display(value), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
         }
-        androidx.compose.material3.Slider(
+        Slider(
             value = value.toFloat(),
             onValueChange = { onChange(it.toDouble()) },
             valueRange = range.start.toFloat()..range.endInclusive.toFloat(),
@@ -419,7 +453,9 @@ private fun IntField(label: String, value: Int, onChange: (Int) -> Unit) {
     OutlinedTextField(
         value = value.toString(),
         onValueChange = { new -> new.toIntOrNull()?.let(onChange) },
+        modifier = Modifier.fillMaxWidth(),
         label = { Text(label) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         singleLine = true,
     )
 }
@@ -431,7 +467,7 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onChange)
     }
 }
@@ -439,14 +475,18 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ThemeDropdown(selected: String, onSelect: (String) -> Unit) {
-    val options = listOf("system" to "Système", "light" to "Clair", "dark" to "Sombre")
+    val options = listOf(
+        "system" to stringResource(R.string.settings_theme_system),
+        "light" to stringResource(R.string.settings_theme_light),
+        "dark" to stringResource(R.string.settings_theme_dark),
+    )
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
         OutlinedTextField(
-            value = options.firstOrNull { it.first == selected }?.second ?: "Système",
+            value = options.firstOrNull { it.first == selected }?.second ?: options[0].second,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Thème") },
+            label = { Text(stringResource(R.string.settings_theme)) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier.menuAnchor().fillMaxWidth(),
         )
@@ -463,48 +503,67 @@ private fun ThemeDropdown(selected: String, onSelect: (String) -> Unit) {
 
 @Composable
 private fun PinChangeDialog(
-    onDismiss: () -> Unit,
-    onConfirm: (old: String, new: String) -> Unit,
+    requiresOldPin: Boolean,
     message: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (old: String, new: String, confirm: String) -> Unit,
 ) {
     var old by rememberSaveable { mutableStateOf("") }
     var new by rememberSaveable { mutableStateOf("") }
+    var confirm by rememberSaveable { mutableStateOf("") }
+    fun sanitize(value: String) = value.filter(Char::isDigit).take(PinUtils.MAX_LENGTH)
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Changer le PIN") },
+        title = { Text(stringResource(R.string.pin_dialog_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (requiresOldPin) {
+                    OutlinedTextField(
+                        value = old,
+                        onValueChange = { old = sanitize(it) },
+                        label = { Text(stringResource(R.string.pin_old)) },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        singleLine = true,
+                    )
+                }
                 OutlinedTextField(
-                    value = old,
-                    onValueChange = { old = it.filter(Char::isDigit).take(4) },
-                    label = { Text("Ancien PIN") },
+                    value = new,
+                    onValueChange = { new = sanitize(it) },
+                    label = { Text(stringResource(R.string.pin_new)) },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     singleLine = true,
                 )
                 OutlinedTextField(
-                    value = new,
-                    onValueChange = { new = it.filter(Char::isDigit).take(4) },
-                    label = { Text("Nouveau PIN (4 chiffres)") },
+                    value = confirm,
+                    onValueChange = { confirm = sanitize(it) },
+                    label = { Text(stringResource(R.string.pin_confirm)) },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     singleLine = true,
                 )
                 if (!message.isNullOrBlank()) {
                     Text(
                         message,
-                        color = if (message.contains("✅")) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.error,
+                        color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(old, new) }) { Text("OK") }
+            TextButton(onClick = { onConfirm(old, new, confirm) }) {
+                Text(stringResource(R.string.action_ok))
+            }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Annuler") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) }
         },
     )
 }
 
 @Composable
 private fun app(): OllamaChatApp =
-    (androidx.compose.ui.platform.LocalContext.current.applicationContext as OllamaChatApp)
+    (LocalContext.current.applicationContext as OllamaChatApp)

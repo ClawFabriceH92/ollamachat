@@ -8,7 +8,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.trucdecomptable.ollamachat.util.PinUtils
+import com.trucdecomptable.ollamachat.security.SecretVault
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -35,10 +35,13 @@ class SettingsRepository(private val context: Context) {
         val LOCK_ENABLED = booleanPreferencesKey("lock_enabled")
         val PIN_HASH = stringPreferencesKey("pin_hash")
         val LOCK_ON_BACKGROUND = booleanPreferencesKey("lock_on_background")
+        val LOCK_FAILED_ATTEMPTS = intPreferencesKey("lock_failed_attempts")
+        val LOCK_UNTIL = longPreferencesKey("lock_until")
         val BRAVE_API_KEY = stringPreferencesKey("brave_api_key")
         val MCP_SERVERS = stringPreferencesKey("mcp_servers")
         val CONTEXT_COMPACT_ENABLED = booleanPreferencesKey("context_compact_enabled")
         val THINK_ENABLED = booleanPreferencesKey("think_enabled")
+        val TOOLS_ENABLED = booleanPreferencesKey("tools_enabled")
     }
 
     val defaults = Defaults()
@@ -61,6 +64,7 @@ class SettingsRepository(private val context: Context) {
         val braveApiKey: String = ""
         val contextCompactEnabled: Boolean = true
         val thinkEnabled: Boolean = false
+        val toolsEnabled: Boolean = true
     }
 
     // --- flows ---
@@ -84,24 +88,33 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.data.map { it[Keys.VISION_DETECTED] ?: false }
     val lockEnabled: Flow<Boolean> =
         context.dataStore.data.map { it[Keys.LOCK_ENABLED] ?: defaults.lockEnabled }
-    val pinHash: Flow<String> =
-        context.dataStore.data.map { it[Keys.PIN_HASH] ?: PinUtils.hash("0000") }
+
+    /**
+     * Empty until the user actually sets a PIN. It used to default to the hash
+     * of "0000", which unlocked any install where the lock was turned on
+     * without choosing a code.
+     */
+    val pinHash: Flow<String> = context.dataStore.data.map { it[Keys.PIN_HASH].orEmpty() }
     val lockOnBackground: Flow<Boolean> =
         context.dataStore.data.map { it[Keys.LOCK_ON_BACKGROUND] ?: defaults.lockOnBackground }
     val braveApiKey: Flow<String> =
-        context.dataStore.data.map { it[Keys.BRAVE_API_KEY] ?: defaults.braveApiKey }
+        context.dataStore.data.map { SecretVault.decrypt(it[Keys.BRAVE_API_KEY].orEmpty()) }
     val contextCompactEnabled: Flow<Boolean> =
         context.dataStore.data.map { it[Keys.CONTEXT_COMPACT_ENABLED] ?: defaults.contextCompactEnabled }
     val thinkEnabled: Flow<Boolean> =
         context.dataStore.data.map { it[Keys.THINK_ENABLED] ?: defaults.thinkEnabled }
+    val toolsEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[Keys.TOOLS_ENABLED] ?: defaults.toolsEnabled }
     val mcpServers: Flow<List<McpServer>> =
         context.dataStore.data.map { parseMcpServers(it[Keys.MCP_SERVERS]) }
     val lockConfig: Flow<LockConfig> =
         context.dataStore.data.map { p ->
             LockConfig(
                 enabled = p[Keys.LOCK_ENABLED] ?: defaults.lockEnabled,
-                pinHash = p[Keys.PIN_HASH] ?: PinUtils.hash("0000"),
+                pinHash = p[Keys.PIN_HASH].orEmpty(),
                 lockOnBackground = p[Keys.LOCK_ON_BACKGROUND] ?: defaults.lockOnBackground,
+                failedAttempts = p[Keys.LOCK_FAILED_ATTEMPTS] ?: 0,
+                lockedUntil = p[Keys.LOCK_UNTIL] ?: 0L,
             )
         }
 
@@ -121,10 +134,12 @@ class SettingsRepository(private val context: Context) {
             theme = p[Keys.THEME] ?: defaults.theme,
             lockEnabled = p[Keys.LOCK_ENABLED] ?: defaults.lockEnabled,
             lockOnBackground = p[Keys.LOCK_ON_BACKGROUND] ?: defaults.lockOnBackground,
-            braveApiKey = p[Keys.BRAVE_API_KEY] ?: defaults.braveApiKey,
+            hasPin = !p[Keys.PIN_HASH].isNullOrBlank(),
+            braveApiKey = SecretVault.decrypt(p[Keys.BRAVE_API_KEY].orEmpty()),
             contextCompactEnabled = p[Keys.CONTEXT_COMPACT_ENABLED] ?: defaults.contextCompactEnabled,
             mcpServers = parseMcpServers(p[Keys.MCP_SERVERS]),
             thinkEnabled = p[Keys.THINK_ENABLED] ?: defaults.thinkEnabled,
+            toolsEnabled = p[Keys.TOOLS_ENABLED] ?: defaults.toolsEnabled,
         )
     }
 
@@ -145,11 +160,52 @@ class SettingsRepository(private val context: Context) {
     suspend fun setLockEnabled(v: Boolean) = context.dataStore.edit { it[Keys.LOCK_ENABLED] = v }
     suspend fun setPinHash(v: String) = context.dataStore.edit { it[Keys.PIN_HASH] = v }
     suspend fun setLockOnBackground(v: Boolean) = context.dataStore.edit { it[Keys.LOCK_ON_BACKGROUND] = v }
-    suspend fun setBraveApiKey(v: String) = context.dataStore.edit { it[Keys.BRAVE_API_KEY] = v }
     suspend fun setContextCompactEnabled(v: Boolean) = context.dataStore.edit { it[Keys.CONTEXT_COMPACT_ENABLED] = v }
     suspend fun setThinkEnabled(v: Boolean) = context.dataStore.edit { it[Keys.THINK_ENABLED] = v }
+    suspend fun setToolsEnabled(v: Boolean) = context.dataStore.edit { it[Keys.TOOLS_ENABLED] = v }
+
+    /** Encrypted at rest with an Android Keystore key. */
+    suspend fun setBraveApiKey(v: String) =
+        context.dataStore.edit { it[Keys.BRAVE_API_KEY] = SecretVault.encrypt(v) }
+
     suspend fun setMcpServers(servers: List<McpServer>) =
         context.dataStore.edit { it[Keys.MCP_SERVERS] = serializeMcpServers(servers) }
+
+    // --- brute-force throttling on the PIN pad ---
+
+    /** Records a wrong PIN and returns the timestamp until which entry is blocked. */
+    suspend fun recordFailedUnlock(): Long {
+        var until = 0L
+        context.dataStore.edit { p ->
+            val attempts = (p[Keys.LOCK_FAILED_ATTEMPTS] ?: 0) + 1
+            p[Keys.LOCK_FAILED_ATTEMPTS] = attempts
+            until = System.currentTimeMillis() + lockoutMillis(attempts)
+            p[Keys.LOCK_UNTIL] = until
+        }
+        return until
+    }
+
+    suspend fun clearFailedUnlocks() = context.dataStore.edit { p ->
+        p[Keys.LOCK_FAILED_ATTEMPTS] = 0
+        p[Keys.LOCK_UNTIL] = 0L
+    }
+
+    companion object {
+        /**
+         * Free tries up to [FREE_ATTEMPTS], then a doubling delay capped at
+         * five minutes — a 4-digit PIN is only 10 000 candidates, so unlimited
+         * retries make the lock decorative.
+         */
+        const val FREE_ATTEMPTS = 4
+        private const val MAX_LOCKOUT_MS = 5 * 60_000L
+
+        fun lockoutMillis(attempts: Int): Long {
+            if (attempts <= FREE_ATTEMPTS) return 0L
+            val step = attempts - FREE_ATTEMPTS      // 1, 2, 3, …
+            val millis = 5_000L shl (step - 1).coerceAtMost(10)
+            return millis.coerceAtMost(MAX_LOCKOUT_MS)
+        }
+    }
 }
 
 /** A configured MCP server (name + streamable HTTP endpoint). */
@@ -191,7 +247,12 @@ data class LockConfig(
     val enabled: Boolean,
     val pinHash: String,
     val lockOnBackground: Boolean,
-)
+    val failedAttempts: Int = 0,
+    val lockedUntil: Long = 0L,
+) {
+    /** The lock only guards anything once a PIN actually exists. */
+    val active: Boolean get() = enabled && pinHash.isNotBlank()
+}
 
 /** Full persisted settings snapshot (single DataStore read). */
 data class SettingsSnapshot(
@@ -208,8 +269,10 @@ data class SettingsSnapshot(
     val theme: String,
     val lockEnabled: Boolean,
     val lockOnBackground: Boolean,
+    val hasPin: Boolean,
     val braveApiKey: String,
     val contextCompactEnabled: Boolean,
     val mcpServers: List<McpServer>,
     val thinkEnabled: Boolean,
+    val toolsEnabled: Boolean,
 )

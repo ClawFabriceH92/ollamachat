@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Actions -->
+    <string name="action_ok">OK</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_close">Close</string>
+    <string name="action_add">Add</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_rename">Rename</string>
+    <string name="action_back">Back</string>
+    <string name="action_settings">Settings</string>
+    <string name="action_menu">Menu</string>
+    <string name="action_send">Send</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_copy_code">Copy code</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_regenerate">Regenerate</string>
+    <string name="action_archive">Archive</string>
+    <string name="action_restore">Restore</string>
+    <string name="action_search">Search</string>
+    <string name="action_clear_search">Clear search</string>
+    <string name="action_scroll_bottom">Scroll to bottom</string>
+
+    <!-- Conversations -->
+    <string name="conversations_title">Conversations</string>
+    <string name="conversations_tab_active">Active</string>
+    <string name="conversations_tab_archived">Archived</string>
+    <string name="conversations_new">New conversation</string>
+    <string name="conversations_empty">No conversation yet.\nTap + to start one.</string>
+    <string name="conversations_archived_empty">No archived conversation.</string>
+    <string name="conversations_search_hint">Search conversations…</string>
+    <string name="conversations_search_empty">No result for “%1$s”.</string>
+    <string name="conversations_delete_title">Delete permanently?</string>
+    <string name="conversations_delete_body">“%1$s” and all its messages will be erased. This cannot be undone.</string>
+
+    <!-- Chat -->
+    <string name="chat_new_conversation">New conversation</string>
+    <string name="chat_model_undefined">no model selected</string>
+    <string name="chat_input_placeholder">Write a message…</string>
+    <string name="chat_attach">Import a document</string>
+    <string name="chat_search_web">Search the web</string>
+    <string name="chat_answering">Answering…</string>
+    <string name="chat_reasoning">Reasoning</string>
+    <string name="chat_image_sent">Image</string>
+    <string name="chat_tool_label">Tool “%1$s”</string>
+    <string name="chat_stats">%1$s</string>
+    <string name="chat_empty">Ask your first question.</string>
+
+    <string name="chat_menu_system_prompt">System prompt…</string>
+    <string name="chat_menu_model">Change model…</string>
+    <string name="chat_menu_memory">Memory…</string>
+    <string name="chat_menu_export">Export conversation…</string>
+    <string name="chat_menu_read_url">Read a web page…</string>
+    <string name="chat_menu_clear">Clear conversation</string>
+    <string name="chat_menu_delete">Delete permanently</string>
+
+    <string name="chat_rename_title">Rename conversation</string>
+    <string name="chat_system_prompt_title">System prompt for this conversation</string>
+    <string name="chat_model_title">Model for this conversation</string>
+    <string name="chat_model_empty">No model — check the server connection</string>
+    <string name="chat_delete_title">Delete permanently?</string>
+    <string name="chat_delete_body">Every message in this conversation will be erased. This cannot be undone.</string>
+    <string name="chat_clear_title">Clear conversation?</string>
+    <string name="chat_clear_body">Messages will be erased but the conversation is kept.</string>
+    <string name="chat_edit_title">Edit message</string>
+    <string name="chat_edit_body">The message is sent again and everything after it is replaced.</string>
+
+    <string name="chat_url_title">Read a web page</string>
+    <string name="chat_url_label">URL</string>
+    <string name="chat_url_hint">The page content is added to the conversation, then you ask your question about it.</string>
+    <string name="chat_url_confirm">Read</string>
+
+    <string name="chat_memory_title">Persistent memory</string>
+    <string name="chat_memory_hint">These facts are injected into every conversation so the model knows you.</string>
+    <string name="chat_memory_new">New fact to remember</string>
+    <string name="chat_memory_empty">No memory yet.</string>
+
+    <string name="chat_export_subject">OllamaChat conversation</string>
+    <string name="chat_export_chooser">Export conversation</string>
+
+    <!-- Toasts -->
+    <string name="toast_busy">Still answering — hold on a moment</string>
+    <string name="toast_stopped">Answer stopped — the generated text is kept</string>
+    <string name="toast_searching">Searching the web…</string>
+    <string name="toast_search_empty">No results — try another wording</string>
+    <string name="toast_reading_page">Reading the page…</string>
+    <string name="toast_page_read">Page read — ask your question about it</string>
+    <string name="toast_page_failed">Could not read: %1$s</string>
+    <string name="toast_image_added">Image added — send your question</string>
+    <string name="toast_image_failed">Could not save the image</string>
+    <string name="toast_document_imported">Document imported — ask your question about it</string>
+    <string name="toast_copied">Copied</string>
+    <string name="toast_export_failed">No app available to share the file</string>
+
+    <!-- Errors -->
+    <string name="error_connection">Server unreachable — check the address and your network</string>
+    <string name="error_timeout">The server is taking too long to answer</string>
+    <string name="error_http">The server rejected the request (%1$s)</string>
+    <string name="error_server">Server error: %1$s</string>
+    <string name="error_empty">The model produced no answer</string>
+    <string name="error_no_model">No model selected — open the settings</string>
+    <string name="error_no_conversation">Conversation not found</string>
+    <string name="error_unknown">Unexpected error: %1$s</string>
+    <string name="error_generic">Unexpected error</string>
+
+    <!-- Lock -->
+    <string name="lock_title">App locked</string>
+    <string name="lock_enter_pin">Enter your code</string>
+    <string name="lock_wrong_pin">Wrong code</string>
+    <string name="lock_locked_out">Too many attempts — retry in %1$d s</string>
+    <string name="lock_biometric">Unlock with biometrics</string>
+    <string name="lock_biometric_title">Unlock OllamaChat</string>
+    <string name="lock_biometric_subtitle">Use your fingerprint or face</string>
+    <string name="lock_backspace">Backspace</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_section_connection">Connection</string>
+    <string name="settings_server_url">Ollama server address</string>
+    <string name="settings_server_url_hint">http://192.168.1.50:11434</string>
+    <string name="settings_scan">Auto-detect an Ollama server</string>
+    <string name="settings_scanning">Scanning the network…</string>
+    <string name="settings_test">Test connection</string>
+    <string name="settings_testing">Testing…</string>
+    <string name="settings_test_ok">Connected</string>
+    <string name="settings_test_failed">Failed: %1$s</string>
+    <string name="settings_model">Model</string>
+    <string name="settings_model_empty">No model — test the connection</string>
+    <string name="settings_model_refresh">Refresh the model list</string>
+
+    <string name="settings_section_web">Web search</string>
+    <string name="settings_brave_key">Brave API key (optional)</string>
+    <string name="settings_brave_key_hint">Without a key: Wikipedia search only</string>
+    <string name="settings_brave_help">Free key at api.search.brave.com (2000 requests/month). It is encrypted on the device.</string>
+    <string name="settings_show_key">Show key</string>
+    <string name="settings_hide_key">Hide key</string>
+
+    <string name="settings_section_generation">Generation</string>
+    <string name="settings_temperature">Temperature</string>
+    <string name="settings_top_p">top_p</string>
+    <string name="settings_top_k">top_k</string>
+    <string name="settings_num_predict">Max tokens (num_predict)</string>
+    <string name="settings_num_ctx">Context (num_ctx)</string>
+    <string name="settings_keep_alive">Keep alive (e.g. 5m, -1 = forever)</string>
+    <string name="settings_streaming">Streaming (live answer)</string>
+    <string name="settings_compact">Automatically compact the context</string>
+    <string name="settings_compact_help">When the context fills up, older messages are summarized. They stay visible in the conversation.</string>
+    <string name="settings_think">Thinking mode (deeper, slower answers)</string>
+    <string name="settings_think_help">Off by default: immediate answers. Turn it on for complex questions, if the model supports it.</string>
+    <string name="settings_tools">Allow tools (web, URL, weather, calculator, MCP)</string>
+    <string name="settings_tools_help">Tools are only offered to models that support them. Content fetched from the web is treated as data, never as instructions.</string>
+
+    <string name="settings_section_mcp">MCP servers (external tools)</string>
+    <string name="settings_mcp_add">Add an MCP server</string>
+    <string name="settings_mcp_help">The model can use tools from MCP servers (streamable HTTP, e.g. http://IP:PORT/mcp).</string>
+    <string name="settings_mcp_name">Name (e.g. weather)</string>
+    <string name="settings_mcp_url">Server URL</string>
+
+    <string name="settings_section_prompt">Default system prompt</string>
+    <string name="settings_section_appearance">Appearance</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_theme_system">System</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+
+    <string name="settings_section_security">Security</string>
+    <string name="settings_lock">Lock the app (PIN or biometrics)</string>
+    <string name="settings_lock_background">Lock when sent to background</string>
+    <string name="settings_set_pin">Set a code</string>
+    <string name="settings_change_pin">Change the code</string>
+    <string name="settings_lock_needs_pin">Set a code to enable locking.</string>
+    <string name="settings_security_help">Conversations stay on the device. System backup is disabled and the recents preview is hidden while the lock is on.</string>
+
+    <string name="pin_dialog_title">App code</string>
+    <string name="pin_old">Current code</string>
+    <string name="pin_new">New code (4 to 8 digits)</string>
+    <string name="pin_confirm">Confirm the code</string>
+    <string name="pin_error_invalid">The code must be 4 to 8 digits</string>
+    <string name="pin_error_mismatch">The two codes do not match</string>
+    <string name="pin_error_wrong_old">Current code is wrong</string>
+    <string name="pin_changed">Code saved</string>
+
+    <!-- Welcome -->
+    <string name="welcome_title">Welcome</string>
+    <string name="welcome_subtitle">Connect the app to your Ollama server.</string>
+    <string name="welcome_continue">Continue</string>
+    <string name="welcome_finish">Get started</string>
+
+    <string name="welcome_connected">Connected</string>
+    <string name="welcome_pick_model">Pick the default model:</string>
+    <string name="welcome_no_models">No model installed on the server — install one, then try again.</string>
+    <string name="welcome_retest">Test the connection again</string>
+
+    <!-- Notifications -->
+    <string name="notification_channel_generation">Generation in progress</string>
+    <string name="notification_channel_updates">Updates</string>
+    <string name="notification_generating_title">OllamaChat is answering…</string>
+    <string name="notification_generating_text">The answer keeps going while the app is in the background.</string>
+    <string name="notification_update_available">OllamaChat v%1$s available</string>
+    <string name="notification_update_downloading">Downloading update v%1$s…</string>
+</resources>

@@ -9,8 +9,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [Conversation::class, Message::class, Memory::class],
-    version = 2,
-    exportSchema = false,
+    version = 3,
+    exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun conversationDao(): ConversationDao
@@ -22,7 +22,7 @@ abstract class AppDatabase : RoomDatabase() {
         private var instance: AppDatabase? = null
 
         /** v1 -> v2: assistant message stats column + long-term memory table. */
-        private val MIGRATION_1_2 = object : Migration(1, 2) {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE messages ADD COLUMN stats TEXT")
                 db.execSQL(
@@ -35,6 +35,28 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v2 -> v3: images move to files, messages can be hidden from the model
+         * context, tool traces are labelled, reasoning is kept, and the history
+         * gets an index matching its sort order.
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN imagePath TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN thinking TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN toolName TEXT")
+                db.execSQL(
+                    "ALTER TABLE messages ADD COLUMN excludedFromContext INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_messages_conversationId_createdAt " +
+                        "ON messages (conversationId, createdAt)"
+                )
+            }
+        }
+
+        val MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
+
         fun get(context: Context): AppDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -42,7 +64,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "ollamachat.db",
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(*MIGRATIONS)
                     .build()
                     .also { instance = it }
             }

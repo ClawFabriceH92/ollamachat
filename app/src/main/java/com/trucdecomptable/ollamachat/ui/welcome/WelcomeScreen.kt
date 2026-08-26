@@ -29,10 +29,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.trucdecomptable.ollamachat.R
 import com.trucdecomptable.ollamachat.data.ollama.NetworkScanner
 import com.trucdecomptable.ollamachat.ui.settings.SettingsViewModel
 
@@ -62,10 +64,10 @@ fun WelcomeScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(24.dp))
-        Text("OllamaChat", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         Text(
-            "Connectez votre téléphone à votre serveur Ollama.",
+            stringResource(R.string.welcome_subtitle),
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -78,8 +80,8 @@ fun WelcomeScreen(
                 value = url,
                 onValueChange = { url = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Adresse du serveur") },
-                placeholder = { Text("http://192.168.1.50:11434") },
+                label = { Text(stringResource(R.string.settings_server_url)) },
+                placeholder = { Text(stringResource(R.string.settings_server_url_hint)) },
                 singleLine = true,
             )
             Spacer(Modifier.height(12.dp))
@@ -91,11 +93,11 @@ fun WelcomeScreen(
                 if (state.scanning) {
                     CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
-                    Text("Scan du réseau en cours…")
+                    Text(stringResource(R.string.settings_scanning))
                 } else {
                     Icon(Icons.Filled.Search, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Détecter automatiquement un serveur Ollama")
+                    Text(stringResource(R.string.settings_scan))
                 }
             }
 
@@ -103,7 +105,7 @@ fun WelcomeScreen(
             state.scanResults.forEach { result ->
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "🖥️ ${result.baseUrl}" + (result.version?.let { "  (v$it)" } ?: ""),
+                    text = result.baseUrl + (result.version?.let { " (v$it)" } ?: ""),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary,
@@ -130,27 +132,26 @@ fun WelcomeScreen(
                     CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(if (state.testing) "Test en cours…" else "Tester la connexion")
+                Text(stringResource(if (state.testing) R.string.settings_testing else R.string.settings_test))
             }
-            state.testResult?.let {
+            if (state.testOk == false) {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    it,
+                    stringResource(R.string.settings_test_failed, state.testResult.orEmpty()),
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (state.testOk == true) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.error,
+                    color = MaterialTheme.colorScheme.error,
                     textAlign = TextAlign.Center,
                 )
             }
         } else {
             // --- Step 2: pick the default model ---
-            Text("Connexion OK ✅", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            Text(stringResource(R.string.welcome_connected), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(8.dp))
-            Text("Choisissez le modèle par défaut :", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.welcome_pick_model), style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(16.dp))
             if (state.models.isEmpty()) {
                 Text(
-                    "Aucun modèle installé sur le serveur — installez-en un (ex. qwen3.5:9b) puis réessayez.",
+                    stringResource(R.string.welcome_no_models),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                     textAlign = TextAlign.Center,
@@ -159,7 +160,7 @@ fun WelcomeScreen(
                 TextButton(onClick = {
                     vm.onBaseUrlChange(url.trim())
                     vm.testConnection(url.trim())
-                }) { Text("Re-tester la connexion") }
+                }) { Text(stringResource(R.string.welcome_retest)) }
             } else {
                 state.models.forEach { m ->
                     TextButton(onClick = { model = m.name }) {
@@ -180,7 +181,7 @@ fun WelcomeScreen(
                     enabled = model.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Commencer à discuter")
+                    Text(stringResource(R.string.welcome_finish))
                 }
             }
         }

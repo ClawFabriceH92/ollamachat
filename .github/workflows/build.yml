@@ -2,6 +2,8 @@ name: Build APK
 
 on:
   push:
+    branches: [ main, 'claude/**' ]
+  pull_request:
     branches: [ main ]
   workflow_dispatch:
 
@@ -28,6 +30,15 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle.kts', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
       - name: Install SDK packages
         run: |
           sdkmanager "platforms;android-35" "build-tools;35.0.0" >/dev/null
@@ -37,16 +48,31 @@ jobs:
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --no-daemon
 
+      - name: Android Lint
+        run: ./gradlew lintDebug --no-daemon
+
       - name: Build release APK
         run: ./gradlew assembleRelease --no-daemon
 
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ollamachat-apk
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
       - name: Publish "latest" release
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
           VER=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
           APK=app/build/outputs/apk/release/app-release.apk
+          # Create the release once, then overwrite the asset in place so the
+          # download URL never 404s between two builds.
+          gh release view latest >/dev/null 2>&1 || \
+            gh release create latest --title "OllamaChat v${VER}" --notes "Build automatique — v${VER}"
+          gh release edit latest --title "OllamaChat v${VER}" --notes "Build automatique — v${VER}"
           for i in 1 2 3 4 5; do
-            gh release delete latest --yes 2>/dev/null || true
-            gh release create latest "$APK" --title "OllamaChat v${VER}" --notes "Build automatique — v${VER}" && break
+            gh release upload latest "$APK" --clobber && break
             sleep 10
           done
         env:
