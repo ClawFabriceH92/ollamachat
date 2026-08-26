@@ -96,6 +96,7 @@ import com.trucdecomptable.ollamachat.OllamaChatApp
 import com.trucdecomptable.ollamachat.R
 import com.trucdecomptable.ollamachat.data.db.Memory
 import com.trucdecomptable.ollamachat.data.db.Message
+import com.trucdecomptable.ollamachat.data.db.images
 import com.trucdecomptable.ollamachat.data.ollama.ChatError
 import com.trucdecomptable.ollamachat.data.ollama.ChatErrorCode
 import com.trucdecomptable.ollamachat.ui.markdown.MarkdownText
@@ -134,13 +135,8 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
 
     val documentLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            val mime = context.contentResolver.getType(uri) ?: "*/*"
-            vm.importDocument(uri, mime, context)
-        }
-    }
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris -> vm.importDocuments(uris, context) }
 
     val streamingVisible = state.streamingText.isNotBlank() || state.streamingThinking.isNotBlank()
     val headerCount = if (state.hasOlderMessages) 1 else 0
@@ -577,7 +573,7 @@ private fun MessageBubble(message: Message, onLongPress: () -> Unit) {
                 .combinedClickable(onClick = {}, onLongClick = onLongPress)
                 .padding(12.dp),
         ) {
-            message.imagePath?.let { path -> MessageImage(path) }
+            if (message.images.isNotEmpty()) MessageImages(message.images)
 
             if (!message.thinking.isNullOrBlank()) {
                 ThinkingSection(message.thinking)
@@ -693,6 +689,16 @@ private fun ThinkingSection(thinking: String) {
                 modifier = Modifier.padding(top = 4.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun MessageImages(paths: List<String>) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        paths.forEach { path -> MessageImage(path) }
     }
 }
 

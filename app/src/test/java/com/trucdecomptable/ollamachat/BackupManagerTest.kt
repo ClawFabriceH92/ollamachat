@@ -60,7 +60,7 @@ class BackupManagerTest {
                 role = "user",
                 content = "Photo",
                 contentType = "image",
-                imagePath = imagePath,
+                imagePaths = imagePath,
             )
         )
         db.messageDao().insert(
@@ -107,7 +107,7 @@ class BackupManagerTest {
         assertTrue(messages[2].excludedFromContext)
         assertEquals("40 tok/s", messages[3].stats)
 
-        val restoredImage = messages[1].imagePath
+        val restoredImage = messages[1].imagePaths
         assertTrue(restoredImage != null && File(restoredImage).exists())
         assertArrayEquals(byteArrayOf(4, 2, 4, 2), File(restoredImage!!).readBytes())
         assertEquals("aime la mer", db.memoryDao().listAll().single().content)
@@ -150,6 +150,6 @@ class BackupManagerTest {
         assertEquals(4, result.messages)
         assertEquals(0, result.images)
         val messages = db.messageDao().listForConversation(db.conversationDao().listAll().single().id)
-        assertEquals(null, messages[1].imagePath)
+        assertEquals(null, messages[1].imagePaths)
     }
 }

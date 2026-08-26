@@ -4,6 +4,8 @@ import android.content.Context
 import com.trucdecomptable.ollamachat.data.db.AppDatabase
 import com.trucdecomptable.ollamachat.data.db.Conversation
 import com.trucdecomptable.ollamachat.data.db.ImageStore
+import com.trucdecomptable.ollamachat.data.db.imagePathsOf
+import com.trucdecomptable.ollamachat.data.db.images
 import com.trucdecomptable.ollamachat.data.db.Memory
 import com.trucdecomptable.ollamachat.data.db.Message
 import kotlinx.coroutines.Dispatchers
@@ -39,12 +41,10 @@ class BackupManager(
 
             conversations.forEach { conversation ->
                 db.messageDao().listForConversation(conversation.id).forEach { message ->
-                    val imageName = message.imagePath?.let { path ->
+                    val imageNames = message.images.mapNotNull { path ->
                         val file = File(path)
-                        if (!file.exists()) return@let null
-                        val name = file.name
-                        images[name] = file.readBytes()
-                        name
+                        if (!file.exists()) return@mapNotNull null
+                        file.name.also { images[it] = file.readBytes() }
                     }
                     messages.add(
                         BackupMessage(
@@ -52,7 +52,7 @@ class BackupManager(
                             role = message.role,
                             content = message.content,
                             contentType = message.contentType,
-                            imageName = imageName,
+                            imageNames = imageNames,
                             createdAt = message.createdAt,
                             stats = message.stats,
                             thinking = message.thinking,
@@ -118,7 +118,7 @@ class BackupManager(
             var missingImages = 0
             payload.messages.forEach { m ->
                 val conversationId = idByRef[m.conversationRef] ?: return@forEach
-                val path = m.imageName?.let { name ->
+                val paths = m.imageNames.mapNotNull { name ->
                     restored[name] ?: run { missingImages++; null }
                 }
                 db.messageDao().insert(
@@ -127,7 +127,7 @@ class BackupManager(
                         role = m.role,
                         content = m.content,
                         contentType = m.contentType,
-                        imagePath = path,
+                        imagePaths = imagePathsOf(paths),
                         createdAt = m.createdAt,
                         stats = m.stats,
                         thinking = m.thinking,

@@ -56,6 +56,8 @@ data class SettingsUiState(
     val scanResults: List<NetworkScanner.ScanResult> = emptyList(),
     val backupBusy: Boolean = false,
     val backupMessage: UiMessage? = null,
+    val pullingModel: String? = null,
+    val pullProgress: Float = 0f,
 )
 
 /** Transient (non-persisted) UI state merged into the settings snapshot. */
@@ -69,6 +71,8 @@ private data class Transient(
     val scanResults: List<NetworkScanner.ScanResult> = emptyList(),
     val backupBusy: Boolean = false,
     val backupMessage: UiMessage? = null,
+    val pullingModel: String? = null,
+    val pullProgress: Float = 0f,
 )
 
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
@@ -110,6 +114,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             scanResults = tr.scanResults,
             backupBusy = tr.backupBusy,
             backupMessage = tr.backupMessage,
+            pullingModel = tr.pullingModel,
+            pullProgress = tr.pullProgress,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
 
@@ -302,6 +308,47 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun consumeBackupMessage() = transient.update { it.copy(backupMessage = null) }
+
+    // --- server-side model management ---
+
+    fun pullModel(name: String) {
+        val model = name.trim()
+        if (model.isEmpty() || transient.value.pullingModel != null) return
+        viewModelScope.launch {
+            val url = settings.baseUrl.first()
+            transient.update { it.copy(pullingModel = model, pullProgress = 0f, backupMessage = null) }
+            val result = container.ollamaClient.pullModel(url, model) { progress ->
+                transient.update { it.copy(pullProgress = progress.fraction) }
+            }
+            transient.update {
+                it.copy(
+                    pullingModel = null,
+                    pullProgress = 0f,
+                    backupMessage = if (result.isSuccess) uiMessage(R.string.models_pulled, model)
+                    else uiMessage(R.string.models_pull_failed, result.exceptionOrNull()?.message),
+                )
+            }
+            if (result.isSuccess) refreshModels()
+        }
+    }
+
+    fun deleteModel(name: String) {
+        viewModelScope.launch {
+            val url = settings.baseUrl.first()
+            val result = container.ollamaClient.deleteModel(url, name)
+            transient.update {
+                it.copy(
+                    backupMessage = if (result.isSuccess) uiMessage(R.string.models_deleted, name)
+                    else uiMessage(R.string.models_delete_failed, result.exceptionOrNull()?.message),
+                )
+            }
+            if (result.isSuccess) {
+                // A deleted model must not stay selected.
+                if (settings.model.first() == name) settings.setModel("")
+                refreshModels()
+            }
+        }
+    }
 
     private fun pinMessage(@StringRes resId: Int) =
         transient.update { it.copy(pinMessage = UiMessage(resId)) }

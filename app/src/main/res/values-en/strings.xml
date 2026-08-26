@@ -220,6 +220,19 @@
     <string name="settings_dynamic_color">Wallpaper colours</string>
     <string name="settings_dynamic_color_help">Matches the app to your wallpaper colours (Android 12 and later).</string>
 
+    <string name="settings_manage_models">Manage server models…</string>
+    <string name="models_dialog_title">Server models</string>
+    <string name="models_pull_hint">Model name (e.g. qwen3:8b)</string>
+    <string name="models_pull">Download</string>
+    <string name="models_pulling">Downloading %1$s…</string>
+    <string name="models_pulled">%1$s installed</string>
+    <string name="models_pull_failed">Download failed: %1$s</string>
+    <string name="models_delete_title">Delete %1$s?</string>
+    <string name="models_delete_body">The model is removed from the Ollama server, not just from the app.</string>
+    <string name="models_deleted">%1$s deleted</string>
+    <string name="models_delete_failed">Delete failed: %1$s</string>
+    <string name="models_empty">No model on the server.</string>
+
     <!-- Notifications -->
     <string name="notification_channel_generation">Generation in progress</string>
     <string name="notification_channel_updates">Updates</string>

@@ -11,6 +11,8 @@ import com.trucdecomptable.ollamachat.R
 import com.trucdecomptable.ollamachat.data.db.ImageStore
 import com.trucdecomptable.ollamachat.data.db.Memory
 import com.trucdecomptable.ollamachat.data.db.Message
+import com.trucdecomptable.ollamachat.data.db.imagePathsOf
+import com.trucdecomptable.ollamachat.data.db.images
 import com.trucdecomptable.ollamachat.data.ollama.ChatError
 import com.trucdecomptable.ollamachat.data.ollama.ModelCapabilities
 import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
@@ -325,35 +327,54 @@ class ChatViewModel(
         }
     }
 
-    /** Extracts an imported document (text -> context message, image -> user message). */
-    fun importDocument(uri: Uri, mime: String, context: Context) {
+    /**
+     * Imports the picked files. Images are gathered into one message so the
+     * model sees them together; each text document becomes its own context
+     * message.
+     */
+    fun importDocuments(uris: List<Uri>, context: Context) {
+        if (uris.isEmpty()) return
         viewModelScope.launch {
-            val extracted = DocumentExtractor.extract(context, uri, mime)
-            if (extracted.imageBytes != null) {
-                val path = ImageStore.save(context, extracted.imageBytes)
-                if (path == null) {
-                    toast(R.string.toast_image_failed)
-                    return@launch
+            val imagePaths = mutableListOf<String>()
+            val labels = mutableListOf<String>()
+            var documents = 0
+
+            uris.forEach { uri ->
+                val mime = context.contentResolver.getType(uri) ?: "*/*"
+                val extracted = DocumentExtractor.extract(context, uri, mime)
+                if (extracted.imageBytes != null) {
+                    ImageStore.save(context, extracted.imageBytes)?.let { path ->
+                        imagePaths.add(path)
+                        labels.add(extracted.label)
+                    }
+                } else {
+                    db.messageDao().insert(
+                        Message(
+                            conversationId = conversationId,
+                            role = "system",
+                            content = "Document « ${extracted.label} » :\n${extracted.text.orEmpty()}",
+                        )
+                    )
+                    documents++
                 }
+            }
+
+            if (imagePaths.isNotEmpty()) {
                 db.messageDao().insert(
                     Message(
                         conversationId = conversationId,
                         role = "user",
-                        content = extracted.label,
+                        content = labels.joinToString(", "),
                         contentType = "image",
-                        imagePath = path,
+                        imagePaths = imagePathsOf(imagePaths),
                     )
                 )
-                toast(R.string.toast_image_added)
-            } else {
-                db.messageDao().insert(
-                    Message(
-                        conversationId = conversationId,
-                        role = "system",
-                        content = "Document « ${extracted.label} » :\n${extracted.text.orEmpty()}",
-                    )
-                )
-                toast(R.string.toast_document_imported)
+            }
+
+            when {
+                imagePaths.isNotEmpty() -> toast(R.string.toast_image_added)
+                documents > 0 -> toast(R.string.toast_document_imported)
+                else -> toast(R.string.toast_image_failed)
             }
         }
     }
@@ -397,7 +418,7 @@ class ChatViewModel(
 
     fun deleteMessage(message: Message) {
         viewModelScope.launch {
-            ImageStore.delete(message.imagePath)
+            message.images.forEach { ImageStore.delete(it) }
             db.messageDao().deleteById(message.id)
         }
     }

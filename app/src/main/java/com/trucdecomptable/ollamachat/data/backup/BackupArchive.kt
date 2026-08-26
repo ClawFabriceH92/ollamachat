@@ -23,7 +23,7 @@ data class BackupMessage(
     val role: String,
     val content: String,
     val contentType: String,
-    val imageName: String?,        // entry name inside the archive
+    val imageNames: List<String>,  // entry names inside the archive
     val createdAt: Long,
     val stats: String?,
     val thinking: String?,
@@ -132,7 +132,7 @@ object BackupArchive {
                             put("role", m.role)
                             put("content", m.content)
                             put("contentType", m.contentType)
-                            putOpt("imageName", m.imageName)
+                            put("imageNames", JSONArray(m.imageNames))
                             put("createdAt", m.createdAt)
                             putOpt("stats", m.stats)
                             putOpt("thinking", m.thinking)
@@ -181,7 +181,11 @@ object BackupArchive {
                 role = o.optString("role", "user"),
                 content = o.optString("content", ""),
                 contentType = o.optString("contentType", "text"),
-                imageName = o.optStringOrNull("imageName"),
+                // Archives written before multi-image support carry a single
+                // name; both shapes are accepted.
+                imageNames = o.optJSONArray("imageNames")?.let { array ->
+                    (0 until array.length()).mapNotNull { array.optString(it, "").ifBlank { null } }
+                } ?: listOfNotNull(o.optStringOrNull("imageName")),
                 createdAt = o.optLong("createdAt"),
                 stats = o.optStringOrNull("stats"),
                 thinking = o.optStringOrNull("thinking"),

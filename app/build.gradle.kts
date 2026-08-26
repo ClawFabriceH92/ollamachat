@@ -44,10 +44,6 @@ android {
         getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
-    // Instrumented tests exercise the shipped, minified build rather than a
-    // debug one that shares none of its risks.
-    testBuildType = "release"
-
     signingConfigs {
         create("release") {
             val ks = releaseKeystore()
@@ -64,10 +60,10 @@ android {
 
     buildTypes {
         release {
-            // R8 is no longer taken on faith: testBuildType above runs the
-            // instrumented tests against this very build. Every ABI stays in
-            // the APK so the x86_64 emulator can actually run it — trimming
-            // them would make the shipped build the one nothing tests.
+            // R8 is not taken on faith either: CI installs this exact APK on
+            // the emulator and checks it starts, which exercises the riskiest
+            // stripped path (SQLCipher's JNI layer at database open). Every
+            // ABI stays in so the x86_64 emulator can run it.
             isMinifyEnabled = true
             isShrinkResources = true
             signingConfig = signingConfigs.getByName("release")

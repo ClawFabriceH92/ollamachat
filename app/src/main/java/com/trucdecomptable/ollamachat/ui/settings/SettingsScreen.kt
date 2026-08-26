@@ -32,6 +32,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -81,6 +82,7 @@ fun SettingsScreen(
     val state by vm.uiState.collectAsState()
     var showPinDialog by remember { mutableStateOf(false) }
     var showMcpDialog by remember { mutableStateOf(false) }
+    var showModelsDialog by remember { mutableStateOf(false) }
     var showKey by rememberSaveable { mutableStateOf(false) }
     var exportUri by remember { mutableStateOf<Uri?>(null) }
     var importUri by remember { mutableStateOf<Uri?>(null) }
@@ -208,6 +210,9 @@ fun SettingsScreen(
                 onSelect = vm::onModelChange,
                 onRefresh = { vm.refreshModels() },
             )
+            TextButton(onClick = { showModelsDialog = true }) {
+                Text(stringResource(R.string.settings_manage_models))
+            }
 
             HorizontalDivider()
             SectionTitle(stringResource(R.string.settings_section_web))
@@ -427,6 +432,17 @@ fun SettingsScreen(
         )
     }
 
+    if (showModelsDialog) {
+        ModelManagerDialog(
+            models = state.models,
+            pullingModel = state.pullingModel,
+            pullProgress = state.pullProgress,
+            onPull = vm::pullModel,
+            onDelete = vm::deleteModel,
+            onDismiss = { showModelsDialog = false },
+        )
+    }
+
     if (showMcpDialog) {
         McpServerDialog(
             onDismiss = { showMcpDialog = false },
@@ -470,6 +486,97 @@ private fun McpServerDialog(onDismiss: () -> Unit, onAdd: (name: String, url: St
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         },
     )
+}
+
+@Composable
+private fun ModelManagerDialog(
+    models: List<com.trucdecomptable.ollamachat.data.ollama.ModelInfo>,
+    pullingModel: String?,
+    pullProgress: Float,
+    onPull: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var wanted by rememberSaveable { mutableStateOf("") }
+    var confirmDelete by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.models_dialog_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (models.isEmpty()) {
+                    Text(stringResource(R.string.models_empty), style = MaterialTheme.typography.bodyMedium)
+                }
+                models.forEach { model ->
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(model.name, style = MaterialTheme.typography.bodyMedium)
+                            if (model.sizeBytes > 0) {
+                                Text(
+                                    text = "%.1f Go".format(model.sizeBytes / 1_000_000_000.0),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        IconButton(onClick = { confirmDelete = model.name }) {
+                            Icon(
+                                Icons.Filled.Delete,
+                                contentDescription = stringResource(R.string.action_delete),
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
+                HorizontalDivider()
+                OutlinedTextField(
+                    value = wanted,
+                    onValueChange = { wanted = it },
+                    label = { Text(stringResource(R.string.models_pull_hint)) },
+                    singleLine = true,
+                    enabled = pullingModel == null,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (pullingModel != null) {
+                    Text(
+                        stringResource(R.string.models_pulling, pullingModel),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    LinearProgressIndicator(
+                        progress = { pullProgress },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onPull(wanted); wanted = "" },
+                enabled = wanted.isNotBlank() && pullingModel == null,
+            ) { Text(stringResource(R.string.models_pull)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) }
+        },
+    )
+
+    confirmDelete?.let { name ->
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            title = { Text(stringResource(R.string.models_delete_title, name)) },
+            text = { Text(stringResource(R.string.models_delete_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDelete(name)
+                    confirmDelete = null
+                }) { Text(stringResource(R.string.action_delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = null }) { Text(stringResource(R.string.action_cancel)) }
+            },
+        )
+    }
 }
 
 @Composable

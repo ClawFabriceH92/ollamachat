@@ -10,7 +10,7 @@ import org.junit.Test
 class ContextBudgetTest {
 
     private fun message(content: String, imagePath: String? = null) =
-        Message(conversationId = 1, role = "user", content = content, imagePath = imagePath)
+        Message(conversationId = 1, role = "user", content = content, imagePaths = imagePath)
 
     @Test
     fun `text is estimated at four characters per token`() {
@@ -22,6 +22,15 @@ class ContextBudgetTest {
     fun `an image costs about a thousand tokens`() {
         val withImage = ContextBudget.estimateTokens(listOf(message("", "/tmp/a.jpg")), "")
         assertEquals(1000, withImage)
+    }
+
+    @Test
+    fun `several images on one message are all counted`() {
+        val two = ContextBudget.estimateTokens(
+            listOf(message("", "/tmp/a.jpg\n/tmp/b.jpg")),
+            "",
+        )
+        assertEquals(2000, two)
     }
 
     @Test

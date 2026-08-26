@@ -5,6 +5,8 @@ import com.trucdecomptable.ollamachat.data.db.Conversation
 import com.trucdecomptable.ollamachat.data.db.ImageStore
 import com.trucdecomptable.ollamachat.data.db.Memory
 import com.trucdecomptable.ollamachat.data.db.Message
+import com.trucdecomptable.ollamachat.data.db.imagePathsOf
+import com.trucdecomptable.ollamachat.data.db.images
 import com.trucdecomptable.ollamachat.data.mcp.McpClient
 import com.trucdecomptable.ollamachat.data.ollama.ChatError
 import com.trucdecomptable.ollamachat.data.ollama.ChatErrorCode
@@ -40,7 +42,7 @@ class ChatRepository(
     private val db: AppDatabase,
     private val settings: SettingsRepository,
     private val client: OllamaClient,
-    private val images: ImageProvider = ImageProvider { ImageStore.readBase64(it) },
+    private val imageProvider: ImageProvider = ImageProvider { ImageStore.readBase64(it) },
 ) {
     /** Indirection so tests do not need Android's Base64. */
     fun interface ImageProvider {
@@ -101,7 +103,7 @@ class ChatRepository(
                         role = "user",
                         content = content,
                         contentType = if (imagePaths.isNotEmpty()) "image" else "text",
-                        imagePath = imagePaths.firstOrNull(),
+                        imagePaths = imagePathsOf(imagePaths),
                     )
                 )
                 runTurn(conversationId, content, onDelta, onThinking, onResult)
@@ -165,7 +167,7 @@ class ChatRepository(
                         role = "user",
                         content = newContent,
                         contentType = original?.contentType ?: "text",
-                        imagePath = original?.imagePath,
+                        imagePaths = original?.imagePaths,
                     )
                 )
                 runTurn(conversationId, newContent, onDelta, onThinking, onResult)
@@ -391,13 +393,14 @@ class ChatRepository(
     }
 
     private fun Message.toChatMessage(): OllamaChatMessage {
-        val base64 = images.base64(imagePath) ?: imageBase64
+        val encoded = this.images.mapNotNull { imageProvider.base64(it) }
+            .ifEmpty { listOfNotNull(imageBase64) }
         return OllamaChatMessage(
             // Tool traces are excluded from context, so anything left that is
             // not user/assistant is context injected by the app.
             role = if (role == "tool") "system" else role,
             content = content,
-            images = if (base64 != null) listOf(base64) else emptyList(),
+            images = encoded,
         )
     }
 
@@ -497,13 +500,19 @@ class ChatRepository(
         db.conversationDao().insert(Conversation(title = "", systemPrompt = systemPrompt, model = model))
 
     /** Removes a conversation and the image files its messages referenced. */
+    private suspend fun deleteImagesOf(conversationId: Long) {
+        db.messageDao().imagePathsFor(conversationId)
+            .flatMap { it.orEmpty().lineSequence().filter(String::isNotBlank).toList() }
+            .forEach { ImageStore.delete(it) }
+    }
+
     suspend fun deleteConversation(conversationId: Long) {
-        db.messageDao().imagePathsFor(conversationId).forEach { ImageStore.delete(it) }
+        deleteImagesOf(conversationId)
         db.conversationDao().deleteById(conversationId)
     }
 
     suspend fun clearMessages(conversationId: Long) {
-        db.messageDao().imagePathsFor(conversationId).forEach { ImageStore.delete(it) }
+        deleteImagesOf(conversationId)
         db.messageDao().deleteForConversation(conversationId)
     }
 }

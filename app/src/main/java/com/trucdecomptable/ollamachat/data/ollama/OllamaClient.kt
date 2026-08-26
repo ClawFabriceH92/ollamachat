@@ -128,6 +128,78 @@ open class OllamaClient(
             }
         }
 
+    /** Progress of a model download, as Ollama reports it. */
+    data class PullProgress(val status: String, val completed: Long, val total: Long) {
+        val fraction: Float get() = if (total > 0) (completed.toFloat() / total).coerceIn(0f, 1f) else 0f
+    }
+
+    /**
+     * Downloads a model onto the server. Until now the only way to install one
+     * was to reach the machine itself, which the welcome screen cheerfully
+     * told the user to go and do.
+     */
+    open suspend fun pullModel(
+        baseUrl: String,
+        model: String,
+        onProgress: (PullProgress) -> Unit = {},
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val payload = JSONObject().put("model", model).put("stream", true)
+            val req = Request.Builder()
+                .url("${normalizeBaseUrl(baseUrl)}/api/pull")
+                .post(payload.toString().toRequestBody(JSON.toMediaType()))
+                .build()
+            streamHttp.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    return@withContext Result.failure(IOException("HTTP ${resp.code}"))
+                }
+                val source = resp.body?.source()
+                    ?: return@withContext Result.failure(IOException("Corps vide"))
+                while (isActive && !source.exhausted()) {
+                    val line = source.readUtf8Line() ?: break
+                    if (line.isBlank()) continue
+                    val json = try {
+                        JSONObject(line)
+                    } catch (_: Exception) {
+                        continue
+                    }
+                    val error = json.optString("error", "")
+                    if (error.isNotBlank()) return@withContext Result.failure(IOException(error))
+                    onProgress(
+                        PullProgress(
+                            status = json.optString("status", ""),
+                            completed = json.optLong("completed", 0L),
+                            total = json.optLong("total", 0L),
+                        )
+                    )
+                }
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            DiagnosticLog.record("ollama/pull", e)
+            Result.failure(e)
+        }
+    }
+
+    /** Removes a model from the server. */
+    open suspend fun deleteModel(baseUrl: String, model: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val payload = JSONObject().put("model", model).toString()
+                val req = Request.Builder()
+                    .url("${normalizeBaseUrl(baseUrl)}/api/delete")
+                    .delete(payload.toRequestBody(JSON.toMediaType()))
+                    .build()
+                http.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) Result.success(Unit)
+                    else Result.failure(IOException("HTTP ${resp.code}"))
+                }
+            } catch (e: Exception) {
+                DiagnosticLog.record("ollama/delete", e)
+                Result.failure(e)
+            }
+        }
+
     /** Stops the streaming call in flight; the partial answer is still returned. */
     open fun cancelActiveStream() {
         activeCall.getAndSet(null)?.cancel()

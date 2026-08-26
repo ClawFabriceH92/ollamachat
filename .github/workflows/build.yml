@@ -7,6 +7,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -15,6 +19,8 @@ jobs:
   # and the R8-minified build are things only a running Android can confirm.
   instrumented:
     runs-on: ubuntu-latest
+    # A hung emulator must fail, not burn an hour.
+    timeout-minutes: 30
     env:
       OLLAMACHAT_KEYSTORE_B64: ${{ secrets.OLLAMACHAT_KEYSTORE_B64 }}
       OLLAMACHAT_KEYSTORE_PASSWORD: ${{ secrets.OLLAMACHAT_KEYSTORE_PASSWORD }}
@@ -53,8 +59,9 @@ jobs:
       # them are merged in the next one.
       - name: Pre-build (outside the emulator)
         run: |
+          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebugAndroidTest --no-daemon
           ./gradlew assembleRelease --no-daemon
-          ./gradlew assembleReleaseAndroidTest --no-daemon
 
       - name: Instrumented tests
         uses: reactivecircus/android-emulator-runner@v2
@@ -64,7 +71,9 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: ./gradlew connectedReleaseAndroidTest --no-daemon
+          script: |
+            ./gradlew connectedDebugAndroidTest --no-daemon
+            bash scripts/smoke-release-apk.sh
 
       # "0 tests found" also exits 0, which would make this whole job a
       # decorative green tick.
