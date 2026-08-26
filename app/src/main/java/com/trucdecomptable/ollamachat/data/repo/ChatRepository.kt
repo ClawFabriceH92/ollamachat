@@ -59,6 +59,14 @@ class ChatRepository(
     var isSending: Boolean = false
         private set
 
+    /** What one turn ended up producing. */
+    private data class TurnOutcome(
+        val text: String? = null,
+        val stats: String? = null,
+        val error: ChatError? = null,
+        val cancelled: Boolean = false,
+    )
+
     /** Capabilities are stable per (server, model) — asking once is enough. */
     private val capabilityCache = mutableMapOf<String, ModelCapabilities>()
 
@@ -96,7 +104,7 @@ class ChatRepository(
         if (isSending) return
         setSending(true)
         sendJob = scope.launch {
-            try {
+            val outcome = try {
                 db.messageDao().insert(
                     Message(
                         conversationId = conversationId,
@@ -106,14 +114,17 @@ class ChatRepository(
                         imagePaths = imagePathsOf(imagePaths),
                     )
                 )
-                runTurn(conversationId, content, onDelta, onThinking, onResult)
+                runTurn(conversationId, content, onDelta, onThinking)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                onResult(null, null, ChatError(ChatErrorCode.UNKNOWN, e.message), false)
+                TurnOutcome(error = ChatError(ChatErrorCode.UNKNOWN, e.message))
             } finally {
+                // Released before the caller is told the turn ended: otherwise
+                // a send issued straight from the callback is refused as busy.
                 setSending(false)
             }
+            outcome.report(onResult)
         }
     }
 
@@ -130,19 +141,20 @@ class ChatRepository(
         if (isSending) return
         setSending(true)
         sendJob = scope.launch {
-            try {
+            val outcome = try {
                 val last = db.messageDao().lastAssistant(conversationId)
                 if (last != null) db.messageDao().deleteFrom(conversationId, last.id)
                 val prompt = db.messageDao().listForContext(conversationId)
                     .lastOrNull { it.role == "user" }?.content.orEmpty()
-                runTurn(conversationId, prompt, onDelta, onThinking, onResult)
+                runTurn(conversationId, prompt, onDelta, onThinking)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                onResult(null, null, ChatError(ChatErrorCode.UNKNOWN, e.message), false)
+                TurnOutcome(error = ChatError(ChatErrorCode.UNKNOWN, e.message))
             } finally {
                 setSending(false)
             }
+            outcome.report(onResult)
         }
     }
 
@@ -158,7 +170,7 @@ class ChatRepository(
         if (isSending) return
         setSending(true)
         sendJob = scope.launch {
-            try {
+            val outcome = try {
                 val original = db.messageDao().getById(messageId)
                 db.messageDao().deleteFrom(conversationId, messageId)
                 db.messageDao().insert(
@@ -170,14 +182,15 @@ class ChatRepository(
                         imagePaths = original?.imagePaths,
                     )
                 )
-                runTurn(conversationId, newContent, onDelta, onThinking, onResult)
+                runTurn(conversationId, newContent, onDelta, onThinking)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                onResult(null, null, ChatError(ChatErrorCode.UNKNOWN, e.message), false)
+                TurnOutcome(error = ChatError(ChatErrorCode.UNKNOWN, e.message))
             } finally {
                 setSending(false)
             }
+            outcome.report(onResult)
         }
     }
 
@@ -187,20 +200,13 @@ class ChatRepository(
         userContent: String,
         onDelta: (String) -> Unit,
         onThinking: (String) -> Unit,
-        onResult: (finalText: String?, statsLine: String?, error: ChatError?, cancelled: Boolean) -> Unit,
-    ) {
+    ): TurnOutcome {
         val conv = db.conversationDao().getById(conversationId)
-        if (conv == null) {
-            onResult(null, null, ChatError(ChatErrorCode.NO_CONVERSATION), false)
-            return
-        }
+        if (conv == null) return TurnOutcome(error = ChatError(ChatErrorCode.NO_CONVERSATION))
 
         val systemPrompt = conv.systemPrompt ?: settings.defaultSystemPrompt.first()
         val model = conv.model ?: settings.model.first()
-        if (model.isBlank()) {
-            onResult(null, null, ChatError(ChatErrorCode.NO_MODEL), false)
-            return
-        }
+        if (model.isBlank()) return TurnOutcome(error = ChatError(ChatErrorCode.NO_MODEL))
         val baseUrl = settings.baseUrl.first()
         val braveKey = settings.braveApiKey.first()
 
@@ -251,13 +257,15 @@ class ChatRepository(
             if (round.error != null) {
                 // Keep whatever was streamed before the failure.
                 persistAssistant(conversationId, round, userContent)
-                onResult(round.fullText.ifBlank { null }, null, round.error, false)
-                return
+                return TurnOutcome(text = round.fullText.ifBlank { null }, error = round.error)
             }
             if (round.cancelled) {
                 persistAssistant(conversationId, round, userContent)
-                onResult(round.fullText.ifBlank { null }, round.statsLine(), null, true)
-                return
+                return TurnOutcome(
+                    text = round.fullText.ifBlank { null },
+                    stats = round.statsLine(),
+                    cancelled = true,
+                )
             }
             if (round.toolCalls.isEmpty()) break
 
@@ -302,13 +310,14 @@ class ChatRepository(
 
         // 4. Persist the final assistant answer with stats.
         val final = result ?: ChatStreamResult("")
-        if (final.fullText.isBlank()) {
-            onResult(null, null, ChatError(ChatErrorCode.EMPTY), false)
-            return
-        }
+        if (final.fullText.isBlank()) return TurnOutcome(error = ChatError(ChatErrorCode.EMPTY))
         persistAssistant(conversationId, final, userContent)
-        onResult(final.fullText, final.statsLine(), null, false)
+        return TurnOutcome(text = final.fullText, stats = final.statsLine())
     }
+
+    private fun TurnOutcome.report(
+        onResult: (finalText: String?, statsLine: String?, error: ChatError?, cancelled: Boolean) -> Unit,
+    ) = onResult(text, stats, error, cancelled)
 
     private suspend fun persistAssistant(
         conversationId: Long,

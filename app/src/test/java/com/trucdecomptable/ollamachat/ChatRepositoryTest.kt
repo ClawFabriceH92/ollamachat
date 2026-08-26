@@ -299,6 +299,23 @@ class ChatRepositoryTest {
     }
 
     @Test
+    fun `a send issued from the result callback is accepted`() = runBlocking {
+        val id = newConversation()
+        val client = FakeClient(mutableListOf(ChatStreamResult("un"), ChatStreamResult("deux")))
+        val repo = repository(client)
+        val second = CountDownLatch(1)
+
+        repo.send(id, "premier") { _, _, _, _ ->
+            // The busy flag must already be down here, otherwise this is
+            // silently dropped and the user sees nothing happen.
+            repo.send(id, "second") { _, _, _, _ -> second.countDown() }
+        }
+
+        assertTrue("le second envoi a été refusé", second.await(10, TimeUnit.SECONDS))
+        assertEquals(2, client.requests.size)
+    }
+
+    @Test
     fun `regenerating replaces the last answer without touching the question`() = runBlocking {
         val id = newConversation()
         val client = FakeClient(mutableListOf(ChatStreamResult("Première"), ChatStreamResult("Seconde")))
