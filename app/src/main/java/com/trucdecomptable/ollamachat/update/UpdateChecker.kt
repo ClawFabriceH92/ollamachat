@@ -35,18 +35,14 @@ object UpdateChecker {
             for (i in 0 until releases.length()) {
                 val release = releases.getJSONObject(i)
                 if (release.optBoolean("draft")) continue
-                val tag = release.optString("tag_name", "")
+                // The rolling release is tagged "latest", so the version has to
+                // come from the title; reading it off the tag made every check
+                // compare "latest" to a real version and never find an update.
+                val version = extractVersion(release.optString("tag_name", ""))
+                    ?: extractVersion(release.optString("name", ""))
+                    ?: continue
                 val assets = release.optJSONArray("assets") ?: org.json.JSONArray()
-                var apkUrl: String? = null
-                for (j in 0 until assets.length()) {
-                    val asset = assets.getJSONObject(j)
-                    if (asset.optString("name", "").endsWith(".apk")) {
-                        apkUrl = asset.optString("browser_download_url")
-                        break
-                    }
-                }
-                if (apkUrl == null) continue
-                val version = tag.removePrefix("v")
+                val apkUrl = pickApk(assets, version) ?: continue
                 if (compareVersions(version, BuildConfig.VERSION_NAME) > 0) {
                     return@withContext UpdateInfo(
                         version = version,
@@ -59,6 +55,26 @@ object UpdateChecker {
         } catch (_: Exception) {
             null
         }
+    }
+
+    /** First dotted number in [text] ("OllamaChat v1.3.0" -> "1.3.0"), or null. */
+    fun extractVersion(text: String): String? =
+        Regex("""\d+(?:\.\d+)+""").find(text)?.value
+
+    /**
+     * Picks the APK to install. A rolling release can still carry assets from
+     * an older build, so an asset naming the new version wins, then the
+     * canonical name, and only then the first one found.
+     */
+    fun pickApk(assets: org.json.JSONArray, version: String): String? {
+        val apks = (0 until assets.length())
+            .map { assets.getJSONObject(it) }
+            .filter { it.optString("name", "").endsWith(".apk", ignoreCase = true) }
+        if (apks.isEmpty()) return null
+        val byVersion = apks.firstOrNull { it.optString("name").contains(version) }
+        val canonical = apks.firstOrNull { it.optString("name") == "app-release.apk" }
+        return (byVersion ?: canonical ?: apks.first()).optString("browser_download_url")
+            .ifBlank { null }
     }
 
     /** 1 if a > b, -1 if a < b, 0 if equal. Segment-by-segment numeric compare. */
