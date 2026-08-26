@@ -10,6 +10,7 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
+import com.trucdecomptable.ollamachat.util.DiagnosticLog
 
 /**
  * Images live as files on app-private storage, never inside the database.
@@ -121,8 +122,9 @@ object ImageStore {
                 db.query("SELECT id FROM messages WHERE imageBase64 IS NOT NULL AND imagePath IS NULL")
                     .use { cursor -> while (cursor.moveToNext()) ids.add(cursor.getLong(0)) }
                 ids.forEach { id -> migrateOne(context, db, id) }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 // Never let maintenance break app start.
+                DiagnosticLog.record("images/migration", e)
             }
         }
 

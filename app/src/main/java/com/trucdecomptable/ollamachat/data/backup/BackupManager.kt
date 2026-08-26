@@ -143,7 +143,13 @@ class BackupManager(
             var insertedMemories = 0
             payload.memories.forEach { memory ->
                 if (memory.content.isBlank() || memory.content in known) return@forEach
-                db.memoryDao().insert(Memory(memory.content, memory.createdAt, memory.updatedAt))
+                db.memoryDao().insert(
+                    Memory(
+                        content = memory.content,
+                        createdAt = memory.createdAt,
+                        updatedAt = memory.updatedAt,
+                    )
+                )
                 insertedMemories++
             }
 

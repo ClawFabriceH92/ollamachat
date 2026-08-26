@@ -71,6 +71,23 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC, id ASC")
     fun observeForConversation(conversationId: Long): Flow<List<Message>>
 
+    /**
+     * The last [limit] messages, oldest first. Opening a conversation should
+     * not mean loading years of history before the first frame.
+     */
+    @Query(
+        """
+        SELECT * FROM (
+            SELECT * FROM messages WHERE conversationId = :conversationId
+            ORDER BY createdAt DESC, id DESC LIMIT :limit
+        ) ORDER BY createdAt ASC, id ASC
+        """
+    )
+    fun observeRecent(conversationId: Long, limit: Int): Flow<List<Message>>
+
+    @Query("SELECT COUNT(*) FROM messages WHERE conversationId = :conversationId")
+    fun observeCount(conversationId: Long): Flow<Int>
+
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC, id ASC")
     suspend fun listForConversation(conversationId: Long): List<Message>
 

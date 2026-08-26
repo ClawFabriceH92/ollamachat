@@ -67,6 +67,7 @@ import com.trucdecomptable.ollamachat.OllamaChatApp
 import com.trucdecomptable.ollamachat.R
 import com.trucdecomptable.ollamachat.data.backup.BackupCrypto
 import com.trucdecomptable.ollamachat.ui.chat.resolve
+import com.trucdecomptable.ollamachat.util.DiagnosticLog
 import com.trucdecomptable.ollamachat.util.PinUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -365,6 +366,14 @@ fun SettingsScreen(
                 }
             }
             Hint(stringResource(R.string.settings_backup_help))
+
+            TextButton(onClick = { shareDiagnostics(context) }) {
+                Text(stringResource(R.string.settings_diagnostics))
+            }
+            TextButton(onClick = { DiagnosticLog.clear() }) {
+                Text(stringResource(R.string.settings_diagnostics_clear))
+            }
+            Hint(stringResource(R.string.settings_diagnostics_help))
 
             Spacer(Modifier.height(24.dp))
         }
@@ -712,6 +721,20 @@ private fun PinChangeDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) }
         },
     )
+}
+
+/** Shares the diagnostic log as plain text; nothing leaves the device otherwise. */
+private fun shareDiagnostics(context: android.content.Context) {
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_SUBJECT, context.getString(R.string.diagnostics_subject))
+        putExtra(android.content.Intent.EXTRA_TEXT, DiagnosticLog.formatted())
+    }
+    runCatching {
+        context.startActivity(
+            android.content.Intent.createChooser(intent, context.getString(R.string.settings_diagnostics))
+        )
+    }
 }
 
 @Composable

@@ -20,7 +20,9 @@ import com.trucdecomptable.ollamachat.ui.documents.DocumentExtractor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -51,6 +53,7 @@ data class ChatUiState(
     val modelCapabilities: ModelCapabilities? = null,
     val error: ChatError? = null,
     val toast: UiMessage? = null,
+    val hasOlderMessages: Boolean = false,
 ) {
     val activeModel: String get() = conversationModel ?: defaultModel
 }
@@ -65,6 +68,7 @@ private data class Transient(
     val capabilities: ModelCapabilities? = null,
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(
     private val conversationId: Long,
     private val container: AppContainer,
@@ -87,8 +91,13 @@ class ChatViewModel(
 
     private val conversation = db.conversationDao().observeById(conversationId)
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
-    private val messages = db.messageDao().observeForConversation(conversationId)
+    /** How many messages are currently observed; grows when the user scrolls back. */
+    private val windowSize = MutableStateFlow(INITIAL_WINDOW)
+    private val messages = windowSize
+        .flatMapLatest { size -> db.messageDao().observeRecent(conversationId, size) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    private val messageCount = db.messageDao().observeCount(conversationId)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
     private val defaultModel = settings.model
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
     private val convWithModel = combine(conversation, defaultModel) { c, m -> c to m }
@@ -99,7 +108,8 @@ class ChatViewModel(
         transient,
         repo.isSendingFlow,
         convWithModel,
-    ) { msgs, tr, sending, pair ->
+        messageCount,
+    ) { msgs, tr, sending, pair, total ->
         val (conv, defModel) = pair
         ChatUiState(
             messages = msgs,
@@ -114,8 +124,14 @@ class ChatViewModel(
             modelCapabilities = tr.capabilities,
             error = tr.error,
             toast = tr.toast,
+            hasOlderMessages = total > msgs.size,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ChatUiState())
+
+    /** Widens the observed window by one page. */
+    fun loadOlderMessages() {
+        windowSize.value += WINDOW_STEP
+    }
 
     val activeModel: String get() = uiState.value.activeModel
 
@@ -432,6 +448,10 @@ class ChatViewModel(
     companion object {
         /** ~20 UI updates per second is smooth and keeps recomposition cheap. */
         private const val STREAM_UI_INTERVAL_MS = 50L
+
+        /** Enough to fill several screens; the rest loads on demand. */
+        internal const val INITIAL_WINDOW = 200
+        internal const val WINDOW_STEP = 200
     }
 
     class Factory(private val conversationId: Long, private val container: AppContainer) :

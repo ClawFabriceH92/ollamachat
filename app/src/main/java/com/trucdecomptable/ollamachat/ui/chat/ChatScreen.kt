@@ -143,7 +143,8 @@ fun ChatScreen(
     }
 
     val streamingVisible = state.streamingText.isNotBlank() || state.streamingThinking.isNotBlank()
-    val itemCount = state.messages.size + if (streamingVisible || state.isSending) 1 else 0
+    val headerCount = if (state.hasOlderMessages) 1 else 0
+    val itemCount = headerCount + state.messages.size + if (streamingVisible || state.isSending) 1 else 0
 
     // Only follow the stream while the user is already at the bottom, so
     // scrolling back through the conversation is not fought by every token.
@@ -304,6 +305,14 @@ fun ChatScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (state.hasOlderMessages) {
+                    item(key = "older") {
+                        TextButton(
+                            onClick = { vm.loadOlderMessages() },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(stringResource(R.string.chat_load_older)) }
+                    }
+                }
                 if (state.messages.isEmpty() && !state.isSending) {
                     item(key = "empty") {
                         Text(

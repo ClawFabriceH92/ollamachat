@@ -210,6 +210,13 @@
     <string name="backup_import_failed">Import failed: %1$s</string>
     <string name="backup_import_note">Importing adds conversations to yours; it never erases anything.</string>
 
+    <string name="chat_load_older">Load earlier messages</string>
+    <string name="settings_diagnostics">Share the diagnostic log</string>
+    <string name="settings_diagnostics_clear">Clear the log</string>
+    <string name="settings_diagnostics_help">The most recent network, tool and database errors. No conversation content is included and nothing is sent automatically.</string>
+    <string name="diagnostics_subject">OllamaChat log</string>
+    <string name="diagnostics_cleared">Log cleared</string>
+
     <!-- Notifications -->
     <string name="notification_channel_generation">Generation in progress</string>
     <string name="notification_channel_updates">Updates</string>

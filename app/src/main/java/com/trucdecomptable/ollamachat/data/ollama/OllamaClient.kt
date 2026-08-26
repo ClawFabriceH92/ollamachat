@@ -18,9 +18,13 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import com.trucdecomptable.ollamachat.util.DiagnosticLog
 
 /**
  * Thin HTTP client for the Ollama REST API.
+ *
+ * Open so tests can stand in a scripted server: the orchestration in
+ * ChatRepository is the part worth covering, and it needs a seam here.
  *
  * Endpoints used:
  *  - GET  {base}/api/version         -> connectivity check
@@ -28,7 +32,7 @@ import java.util.concurrent.atomic.AtomicReference
  *  - POST {base}/api/chat            -> chat (streaming NDJSON, tools, stats)
  *  - POST {base}/api/show            -> model capabilities (vision, tools)
  */
-class OllamaClient(
+open class OllamaClient(
     private val http: OkHttpClient = defaultClient(),
     private val streamHttp: OkHttpClient = sharedStreamClient(),
 ) {
@@ -107,7 +111,7 @@ class OllamaClient(
     }
 
     /** Fetch model capabilities (vision / tool calling / reasoning) via /api/show. */
-    suspend fun modelCapabilities(baseUrl: String, model: String): Result<ModelCapabilities> =
+    open suspend fun modelCapabilities(baseUrl: String, model: String): Result<ModelCapabilities> =
         withContext(Dispatchers.IO) {
             try {
                 val body = JSONObject().put("model", model).toString()
@@ -125,7 +129,7 @@ class OllamaClient(
         }
 
     /** Stops the streaming call in flight; the partial answer is still returned. */
-    fun cancelActiveStream() {
+    open fun cancelActiveStream() {
         activeCall.getAndSet(null)?.cancel()
     }
 
@@ -137,7 +141,7 @@ class OllamaClient(
      * On [cancelActiveStream] the result carries `cancelled = true` together
      * with everything generated so far.
      */
-    suspend fun chatStream(
+    open suspend fun chatStream(
         baseUrl: String,
         model: String,
         messages: List<OllamaChatMessage>,
@@ -259,7 +263,7 @@ class OllamaClient(
      * Single non-streaming chat completion (used for context compaction).
      * Returns the full assistant text.
      */
-    suspend fun chatOnce(
+    open suspend fun chatOnce(
         baseUrl: String,
         model: String,
         messages: List<OllamaChatMessage>,
@@ -375,7 +379,12 @@ class OllamaClient(
         ModelCapabilities()
     }
 
-    private fun classify(e: Exception): ChatError = when (e) {
+    private fun classify(e: Exception): ChatError {
+        DiagnosticLog.record("ollama", e)
+        return classifyCode(e)
+    }
+
+    private fun classifyCode(e: Exception): ChatError = when (e) {
         is SocketTimeoutException -> ChatError(ChatErrorCode.TIMEOUT)
         is ConnectException, is UnknownHostException -> ChatError(ChatErrorCode.CONNECTION)
         else -> ChatError(ChatErrorCode.UNKNOWN, e.message)

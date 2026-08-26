@@ -212,6 +212,13 @@
     <string name="backup_import_failed">Échec de l’import : %1$s</string>
     <string name="backup_import_note">L’import ajoute les conversations aux tiennes, il n’efface jamais rien.</string>
 
+    <string name="chat_load_older">Charger les messages précédents</string>
+    <string name="settings_diagnostics">Partager le journal de diagnostic</string>
+    <string name="settings_diagnostics_clear">Vider le journal</string>
+    <string name="settings_diagnostics_help">Les dernières erreurs réseau, outils et base de données. Aucun contenu de conversation n’y figure et rien n’est envoyé automatiquement.</string>
+    <string name="diagnostics_subject">Journal OllamaChat</string>
+    <string name="diagnostics_cleared">Journal vidé</string>
+
     <!-- Notifications -->
     <string name="notification_channel_generation">Génération en cours</string>
     <string name="notification_channel_updates">Mises à jour</string>

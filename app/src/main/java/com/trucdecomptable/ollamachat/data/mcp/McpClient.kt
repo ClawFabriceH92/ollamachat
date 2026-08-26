@@ -11,6 +11,7 @@ import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import com.trucdecomptable.ollamachat.util.DiagnosticLog
 
 /**
  * Minimal Model Context Protocol (MCP) client over streamable HTTP (JSON-RPC).
@@ -91,6 +92,7 @@ object McpClient {
             toolCache[url] = CachedTools(tools, clock())
             Result.success(tools)
         } catch (e: Exception) {
+            DiagnosticLog.record("mcp/list", e)
             Result.failure(e)
         }
     }
@@ -108,6 +110,7 @@ object McpClient {
                 }
                 Result.success(renderToolResult(result))
             } catch (e: Exception) {
+                DiagnosticLog.record("mcp/call", e)
                 Result.failure(e)
             }
         }

@@ -17,6 +17,7 @@ import com.trucdecomptable.ollamachat.data.ollama.ToolDef
 import com.trucdecomptable.ollamachat.data.prefs.McpServer
 import com.trucdecomptable.ollamachat.data.prefs.SettingsRepository
 import com.trucdecomptable.ollamachat.data.tools.ToolExecutor
+import com.trucdecomptable.ollamachat.util.DiagnosticLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -425,8 +426,9 @@ class ChatRepository(
                         )
                     )
                 }
-            } catch (_: Exception) {
-                // Unreachable MCP server: skip silently.
+            } catch (e: Exception) {
+                // Unreachable MCP server: the model just gets fewer tools.
+                DiagnosticLog.record("mcp/${server.name}", e)
             }
         }
         return tools
@@ -475,8 +477,9 @@ class ChatRepository(
                     content = "Contexte compacté automatiquement (résumé des messages précédents) :\n$summary",
                 )
             )
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // Compaction must never block the send.
+            DiagnosticLog.record("compaction", e)
         }
     }
 
