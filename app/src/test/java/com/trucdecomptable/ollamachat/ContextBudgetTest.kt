@@ -2,6 +2,7 @@ package com.trucdecomptable.ollamachat
 
 import com.trucdecomptable.ollamachat.data.db.Message
 import com.trucdecomptable.ollamachat.data.repo.ContextBudget
+import com.trucdecomptable.ollamachat.data.repo.TurboProfile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -65,5 +66,27 @@ class ContextBudgetTest {
         val summarized = ContextBudget.toSummarize(history)
         assertEquals("message 0", summarized.first().content)
         assertEquals("message 3", summarized.last().content)
+    }
+}
+
+class TurboProfileTest {
+
+    private fun history(count: Int) = List(count) {
+        Message(conversationId = 1, role = "user", content = "m$it")
+    }
+
+    @Test
+    fun `a short history is left alone`() {
+        val short = history(TurboProfile.HISTORY_MESSAGES)
+        assertEquals(short, TurboProfile.trimHistory(short))
+        assertTrue(TurboProfile.trimHistory(emptyList()).isEmpty())
+    }
+
+    @Test
+    fun `a long history keeps only its tail`() {
+        val trimmed = TurboProfile.trimHistory(history(50))
+        assertEquals(TurboProfile.HISTORY_MESSAGES, trimmed.size)
+        // The last message is the one being answered: it must survive.
+        assertEquals("m49", trimmed.last().content)
     }
 }

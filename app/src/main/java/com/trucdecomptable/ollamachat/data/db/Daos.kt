@@ -20,6 +20,7 @@ interface ConversationDao {
                c.title AS title,
                c.updatedAt AS updatedAt,
                c.archived AS archived,
+               c.ephemeralMinutes AS ephemeralMinutes,
                (SELECT m.content FROM messages m
                  WHERE m.conversationId = c.id AND m.role IN ('user', 'assistant')
                  ORDER BY m.createdAt DESC, m.id DESC LIMIT 1) AS preview
@@ -61,6 +62,25 @@ interface ConversationDao {
 
     @Query("UPDATE conversations SET title = :title WHERE id = :id")
     suspend fun rename(id: Long, title: String)
+
+    /** Restarts the ephemeral countdown; called whenever the user acts. */
+    @Query("UPDATE conversations SET updatedAt = :ts WHERE id = :id")
+    suspend fun touch(id: Long, ts: Long = System.currentTimeMillis())
+
+    @Query("UPDATE conversations SET ephemeralMinutes = :minutes, updatedAt = :ts WHERE id = :id")
+    suspend fun setEphemeral(id: Long, minutes: Int, ts: Long = System.currentTimeMillis())
+
+    /**
+     * Conversations whose countdown has run out. The arithmetic lives in the
+     * query so a long list never has to be loaded to find the few expired.
+     */
+    @Query(
+        """
+        SELECT * FROM conversations
+        WHERE ephemeralMinutes > 0 AND (updatedAt + ephemeralMinutes * 60000) <= :now
+        """
+    )
+    suspend fun listExpired(now: Long): List<Conversation>
 }
 
 @Dao

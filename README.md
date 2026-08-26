@@ -8,6 +8,13 @@ Client Android pour serveur **Ollama** — conversations locales et chiffrées, 
 - 🗂️ Multi-conversations : créer, renommer, archiver, supprimer, **rechercher** (titre et contenu)
 - ✏️ Par message : copier, **modifier et renvoyer**, **régénérer**, supprimer
 - 🖼️ **Plusieurs images par message**, affichées dans la conversation et redimensionnées à l’import
+- ⚡ **Mode turbo** : bascule d’un geste dans la barre du chat, pour privilégier la vitesse
+  (modèle maintenu en mémoire, compaction et outils coupés, contexte réduit aux 6 derniers
+  messages, modèle plus léger au choix). Tes réglages ne sont pas modifiés — c’est une couche
+  de surcharge, couper le turbo les restaure tels quels
+- ⏱️ **Conversations éphémères** : effacement automatique après un délai sans activité
+  (5 min à 24 h), réglable par conversation, avec compte à rebours visible. Le compteur
+  repart à chaque message
 - 🧠 Raisonnement (`think`) et traces d’outils repliables
 - 🛠️ Outils : recherche web, lecture d’URL, météo, calcul, mémoire persistante, **serveurs MCP**
   — proposés uniquement aux modèles qui les déclarent
@@ -32,6 +39,13 @@ Tout reste sur l’appareil.
   des instructions.
 - Un **journal de diagnostic** local (réseau, outils, base) est consultable dans les réglages ;
   il ne contient aucun contenu de conversation et n’est jamais envoyé automatiquement.
+
+### Conversations éphémères
+
+Réglable par conversation depuis le menu du chat. La suppression a lieu **pendant que
+l’application tourne** — au démarrage puis toutes les 30 secondes. C’est une mesure d’hygiène,
+pas une protection contre quelqu’un qui a le téléphone en main ; c’est écrit tel quel dans
+l’interface.
 
 ### Sauvegarde et changement de téléphone
 

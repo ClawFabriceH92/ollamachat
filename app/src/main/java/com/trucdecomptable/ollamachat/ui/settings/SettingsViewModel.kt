@@ -14,6 +14,7 @@ import com.trucdecomptable.ollamachat.data.mcp.McpClient
 import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
 import com.trucdecomptable.ollamachat.data.ollama.NetworkScanner
 import com.trucdecomptable.ollamachat.data.prefs.McpServer
+import com.trucdecomptable.ollamachat.data.repo.TurboProfile
 import com.trucdecomptable.ollamachat.util.PinUtils
 import com.trucdecomptable.ollamachat.ui.chat.UiMessage
 import com.trucdecomptable.ollamachat.ui.chat.uiMessage
@@ -47,6 +48,8 @@ data class SettingsUiState(
     val thinkEnabled: Boolean = false,
     val toolsEnabled: Boolean = true,
     val dynamicColor: Boolean = false,
+    val turboEnabled: Boolean = false,
+    val turboModel: String = "",
     val models: List<ModelInfo> = emptyList(),
     val testing: Boolean = false,
     val testResult: String? = null,
@@ -105,6 +108,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             thinkEnabled = snap.thinkEnabled,
             toolsEnabled = snap.toolsEnabled,
             dynamicColor = snap.dynamicColor,
+            turboEnabled = snap.turboEnabled,
+            turboModel = snap.turboModel,
             models = tr.models,
             testing = tr.testing,
             testResult = tr.testResult,
@@ -146,7 +151,21 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun onThinkEnabledChange(v: Boolean) = launchSetting { settings.setThinkEnabled(v) }
     fun onToolsEnabledChange(v: Boolean) = launchSetting { settings.setToolsEnabled(v) }
     fun onDynamicColorChange(v: Boolean) = launchSetting { settings.setDynamicColor(v) }
+    fun onTurboModelChange(v: String) = launchSetting { settings.setTurboModel(v.trim()) }
     fun onFirstLaunchDone() = launchSetting { settings.setFirstLaunchDone(true) }
+
+    /** Enabling turbo also warms the model up, so the next message skips the load. */
+    fun onTurboEnabledChange(enabled: Boolean) {
+        viewModelScope.launch {
+            settings.setTurboEnabled(enabled)
+            if (!enabled) return@launch
+            val url = settings.baseUrl.first()
+            val model = settings.turboModel.first().ifBlank { settings.model.first() }
+            if (url.isNotBlank() && model.isNotBlank()) {
+                container.ollamaClient.warmUp(url, model, TurboProfile.KEEP_ALIVE)
+            }
+        }
+    }
 
     /** Turning the lock on without a code would leave the app effectively open. */
     fun onLockEnabledChange(v: Boolean) {

@@ -16,6 +16,7 @@ import com.trucdecomptable.ollamachat.data.db.images
 import com.trucdecomptable.ollamachat.data.ollama.ChatError
 import com.trucdecomptable.ollamachat.data.ollama.ModelCapabilities
 import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
+import com.trucdecomptable.ollamachat.data.repo.TurboProfile
 import com.trucdecomptable.ollamachat.data.web.UrlFetcher
 import com.trucdecomptable.ollamachat.data.web.WebSearchClient
 import com.trucdecomptable.ollamachat.ui.documents.DocumentExtractor
@@ -56,6 +57,9 @@ data class ChatUiState(
     val error: ChatError? = null,
     val toast: UiMessage? = null,
     val hasOlderMessages: Boolean = false,
+    val turbo: Boolean = false,
+    val ephemeralMinutes: Int = 0,
+    val lastActivity: Long = 0L,
 ) {
     val activeModel: String get() = conversationModel ?: defaultModel
 }
@@ -102,6 +106,8 @@ class ChatViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
     private val defaultModel = settings.model
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+    private val turbo = settings.turboEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     private val convWithModel = combine(conversation, defaultModel) { c, m -> c to m }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null to "")
 
@@ -110,9 +116,10 @@ class ChatViewModel(
         transient,
         repo.isSendingFlow,
         convWithModel,
-        messageCount,
-    ) { msgs, tr, sending, pair, total ->
+        combine(messageCount, turbo) { total, fast -> total to fast },
+    ) { msgs, tr, sending, pair, counters ->
         val (conv, defModel) = pair
+        val (total, fast) = counters
         ChatUiState(
             messages = msgs,
             streamingText = tr.streamingText,
@@ -127,6 +134,9 @@ class ChatViewModel(
             error = tr.error,
             toast = tr.toast,
             hasOlderMessages = total > msgs.size,
+            turbo = fast,
+            ephemeralMinutes = conv?.ephemeralMinutes ?: 0,
+            lastActivity = conv?.updatedAt ?: 0L,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ChatUiState())
 
@@ -137,9 +147,32 @@ class ChatViewModel(
 
     val activeModel: String get() = uiState.value.activeModel
 
+    /**
+     * Turbo trades context and tools for latency; see TurboProfile for exactly
+     * what it overrides.
+     */
+    fun setTurbo(enabled: Boolean) {
+        viewModelScope.launch {
+            settings.setTurboEnabled(enabled)
+            if (enabled) warmUpModel()
+        }
+    }
+
+    /**
+     * Loads the model on the server before the user writes anything, so the
+     * first message does not pay for a cold model.
+     */
+    private suspend fun warmUpModel() {
+        val url = settings.baseUrl.first()
+        val model = settings.turboModel.first().ifBlank { resolveModel() }
+        if (url.isBlank() || model.isBlank()) return
+        container.ollamaClient.warmUp(url, model, TurboProfile.KEEP_ALIVE)
+    }
+
     init {
         viewModelScope.launch {
             refreshModels()
+            if (settings.turboEnabled.first()) warmUpModel()
             // Resolve the model from storage, not from uiState: nothing is
             // collecting it yet at construction time, so it is still empty and
             // capability detection used to silently never run.
@@ -402,6 +435,11 @@ class ChatViewModel(
             db.conversationDao().update(conv.copy(model = model))
             refreshCapabilities(model)
         }
+    }
+
+    /** 0 turns auto-delete off; anything else starts the countdown now. */
+    fun setEphemeral(minutes: Int) {
+        viewModelScope.launch { repo.setEphemeral(conversationId, minutes) }
     }
 
     fun archiveConversation() {

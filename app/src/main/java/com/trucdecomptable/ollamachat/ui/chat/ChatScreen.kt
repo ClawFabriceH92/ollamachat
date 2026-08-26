@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Cancel
@@ -50,6 +51,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -73,6 +75,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -98,8 +101,10 @@ import com.trucdecomptable.ollamachat.data.db.Message
 import com.trucdecomptable.ollamachat.data.db.images
 import com.trucdecomptable.ollamachat.data.ollama.ChatError
 import com.trucdecomptable.ollamachat.data.ollama.ChatErrorCode
+import com.trucdecomptable.ollamachat.data.repo.EphemeralPolicy
 import com.trucdecomptable.ollamachat.ui.markdown.MarkdownText
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -127,11 +132,21 @@ fun ChatScreen(
     var showConfirmClear by remember { mutableStateOf(false) }
     var showUrlDialog by remember { mutableStateOf(false) }
     var showMemoryDialog by remember { mutableStateOf(false) }
+    var showEphemeralDialog by remember { mutableStateOf(false) }
     var actionTarget by remember { mutableStateOf<Message?>(null) }
     var editTarget by remember { mutableStateOf<Message?>(null) }
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val turboAnnounced = remember { mutableStateOf<Boolean?>(null) }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(state.ephemeralMinutes) {
+        while (state.ephemeralMinutes > 0) {
+            now = System.currentTimeMillis()
+            delay(15_000)
+        }
+    }
+    val remainingLabel = remainingLabel(state.ephemeralMinutes, state.lastActivity, now)
 
     val documentLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -156,6 +171,16 @@ fun ChatScreen(
             snackbarHostState.showSnackbar(message.resolve(context))
             vm.consumeToast()
         }
+    }
+
+    LaunchedEffect(state.turbo) {
+        // Skip the very first composition: only report an actual change.
+        if (turboAnnounced.value != null && turboAnnounced.value != state.turbo) {
+            snackbarHostState.showSnackbar(
+                context.getString(if (state.turbo) R.string.turbo_on else R.string.turbo_off)
+            )
+        }
+        turboAnnounced.value = state.turbo
     }
 
     LaunchedEffect(state.error) {
@@ -184,12 +209,32 @@ fun ChatScreen(
                             maxLines = 1,
                             fontWeight = FontWeight.SemiBold,
                         )
-                        Text(
-                            text = state.activeModel.ifBlank { stringResource(R.string.chat_model_undefined) },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = state.activeModel.ifBlank { stringResource(R.string.chat_model_undefined) },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                            // A countdown you cannot see is a countdown you
+                            // will be surprised by.
+                            remainingLabel?.let { label ->
+                                Spacer(Modifier.width(6.dp))
+                                Icon(
+                                    Icons.Filled.Timer,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp),
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                                Spacer(Modifier.width(2.dp))
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
                     }
                 },
                 navigationIcon = {
@@ -201,6 +246,16 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    // Reachable in one tap: a speed switch buried in the
+                    // settings is a speed switch nobody flips.
+                    IconButton(onClick = { vm.setTurbo(!state.turbo) }) {
+                        Icon(
+                            Icons.Filled.Bolt,
+                            contentDescription = stringResource(R.string.turbo_toggle),
+                            tint = if (state.turbo) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.action_settings))
                     }
@@ -228,6 +283,11 @@ fun ChatScreen(
                                 text = { Text(stringResource(R.string.chat_menu_memory)) },
                                 onClick = { showMenu = false; showMemoryDialog = true },
                                 leadingIcon = { Icon(Icons.Filled.Bookmark, null) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_menu_ephemeral)) },
+                                onClick = { showMenu = false; showEphemeralDialog = true },
+                                leadingIcon = { Icon(Icons.Filled.Timer, null) },
                             )
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.chat_menu_export)) },
@@ -436,6 +496,17 @@ fun ChatScreen(
                 vm.fetchUrl(url)
             },
             onDismiss = { showUrlDialog = false },
+        )
+    }
+
+    if (showEphemeralDialog) {
+        EphemeralDialog(
+            current = state.ephemeralMinutes,
+            onSelect = { minutes ->
+                vm.setEphemeral(minutes)
+                showEphemeralDialog = false
+            },
+            onDismiss = { showEphemeralDialog = false },
         )
     }
 
@@ -779,6 +850,62 @@ private fun ThinkingBubble() {
             Text(stringResource(R.string.chat_answering), style = MaterialTheme.typography.bodyMedium)
         }
     }
+}
+
+/** Human-readable time left, or null when the conversation is permanent. */
+@Composable
+private fun remainingLabel(minutes: Int, lastActivity: Long, now: Long): String? {
+    val remaining = EphemeralPolicy.remainingMillis(lastActivity, minutes, now) ?: return null
+    val totalMinutes = (remaining / 60_000L).toInt()
+    return when {
+        totalMinutes < 1 -> stringResource(R.string.ephemeral_remaining_soon)
+        totalMinutes < 60 -> stringResource(R.string.ephemeral_remaining_minutes, totalMinutes)
+        else -> stringResource(R.string.ephemeral_remaining_hours, totalMinutes / 60)
+    }
+}
+
+/** Label for one preset in the picker. */
+@Composable
+private fun ephemeralLabel(minutes: Int): String = when {
+    minutes <= 0 -> stringResource(R.string.ephemeral_off)
+    minutes < 60 -> stringResource(R.string.ephemeral_minutes, minutes)
+    else -> stringResource(R.string.ephemeral_hours, minutes / 60)
+}
+
+@Composable
+private fun EphemeralDialog(current: Int, onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.ephemeral_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                EphemeralPolicy.PRESETS.forEach { minutes ->
+                    Text(
+                        text = ephemeralLabel(minutes) + if (minutes == current) "  ✓" else "",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(minutes) }
+                            .padding(vertical = 10.dp),
+                        fontWeight = if (minutes == current) FontWeight.Bold else FontWeight.Normal,
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.ephemeral_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    stringResource(R.string.ephemeral_caveat),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) }
+        },
+    )
 }
 
 @Composable

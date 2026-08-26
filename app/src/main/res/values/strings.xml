@@ -235,6 +235,32 @@
     <string name="models_delete_failed">Échec de la suppression : %1$s</string>
     <string name="models_empty">Aucun modèle sur le serveur.</string>
 
+    <!-- Turbo -->
+    <string name="turbo_toggle">Mode turbo</string>
+    <string name="turbo_on">Turbo activé — réponses plus rapides, contexte réduit</string>
+    <string name="turbo_off">Turbo désactivé</string>
+    <string name="settings_section_turbo">Vitesse</string>
+    <string name="settings_turbo">Mode turbo</string>
+    <string name="settings_turbo_help">Privilégie la vitesse sur la profondeur. Le modèle reste chargé en mémoire (30 min), la compaction et les outils sont désactivés, le mode réfléchi est coupé, et seuls les 6 derniers messages sont envoyés. Tes réglages ne sont pas modifiés : couper le turbo les restaure tels quels.</string>
+    <string name="settings_turbo_warning">Le modèle oublie le début des longues conversations tant que le turbo est actif.</string>
+    <string name="settings_turbo_model">Modèle turbo (optionnel)</string>
+    <string name="settings_turbo_model_help">Un modèle plus petit répond nettement plus vite. Laisse vide pour garder le modèle habituel.</string>
+
+    <!-- Éphémère -->
+    <string name="chat_menu_ephemeral">Effacement automatique…</string>
+    <string name="ephemeral_title">Effacement automatique</string>
+    <string name="ephemeral_off">Désactivé</string>
+    <string name="ephemeral_minutes">%1$d min</string>
+    <string name="ephemeral_hours">%1$d h</string>
+    <string name="ephemeral_hint">La conversation entière — messages et images — sera supprimée après ce délai sans activité. Le compte à rebours repart à zéro à chaque message.</string>
+    <string name="ephemeral_caveat">La suppression a lieu pendant que l’application tourne : au démarrage, puis toutes les 30 secondes. Ce n’est donc pas une protection contre quelqu’un qui a ton téléphone en main.</string>
+    <string name="ephemeral_remaining_soon">s’efface dans moins d’une minute</string>
+    <string name="ephemeral_remaining_minutes">s’efface dans %1$d min</string>
+    <string name="ephemeral_remaining_hours">s’efface dans %1$d h</string>
+    <string name="ephemeral_badge">éphémère</string>
+    <string name="ephemeral_set">Effacement dans %1$s activé</string>
+    <string name="ephemeral_cleared">Effacement automatique désactivé</string>
+
     <!-- Notifications -->
     <string name="notification_channel_generation">Génération en cours</string>
     <string name="notification_channel_updates">Mises à jour</string>

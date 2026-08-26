@@ -114,6 +114,9 @@ class ChatRepository(
                         imagePaths = imagePathsOf(imagePaths),
                     )
                 )
+                // Restarts the ephemeral countdown: a conversation in use must
+                // not expire mid-exchange.
+                db.conversationDao().touch(conversationId)
                 runTurn(conversationId, content, onDelta, onThinking)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -205,23 +208,31 @@ class ChatRepository(
         if (conv == null) return TurnOutcome(error = ChatError(ChatErrorCode.NO_CONVERSATION))
 
         val systemPrompt = conv.systemPrompt ?: settings.defaultSystemPrompt.first()
-        val model = conv.model ?: settings.model.first()
-        if (model.isBlank()) return TurnOutcome(error = ChatError(ChatErrorCode.NO_MODEL))
         val baseUrl = settings.baseUrl.first()
         val braveKey = settings.braveApiKey.first()
 
+        // Turbo is an override layer, never a rewrite of the stored settings.
+        val turbo = settings.turboEnabled.first()
+        val configuredModel = conv.model ?: settings.model.first()
+        val model = if (turbo) settings.turboModel.first().ifBlank { configuredModel } else configuredModel
+        if (model.isBlank()) return TurnOutcome(error = ChatError(ChatErrorCode.NO_MODEL))
+
         // Tools are only offered to models that declare support: sending a
         // `tools` array to a model without it makes Ollama reject the request.
+        // Turbo drops them outright — they inflate the prompt and usually buy
+        // an extra decision round-trip before a single token comes back.
         val capabilities = capabilities(baseUrl, model)
-        val toolsWanted = settings.toolsEnabled.first() && capabilities.tools
+        val toolsWanted = !turbo && settings.toolsEnabled.first() && capabilities.tools
         val tools = if (toolsWanted) loadTools() else emptyList()
 
         // 1. Optional context compaction (before building the payload).
-        maybeCompact(conversationId, model, baseUrl, systemPrompt)
+        // Skipped in turbo: it runs a whole generation before answering.
+        if (!turbo) maybeCompact(conversationId, model, baseUrl, systemPrompt)
 
         // 2. Build the message list: system (prompt + memories) + history.
-        val memories = db.memoryDao().listRecent(8)
+        val memories = db.memoryDao().listRecent(if (turbo) TurboProfile.MEMORIES else 8)
         val history = db.messageDao().listForContext(conversationId)
+            .let { if (turbo) TurboProfile.trimHistory(it) else it }
         val messages = buildList {
             add(OllamaChatMessage(role = "system", content = buildSystemPrompt(systemPrompt, memories, tools)))
             history.forEach { m -> add(m.toChatMessage()) }
@@ -231,11 +242,17 @@ class ChatRepository(
             put("temperature", settings.temperature.first())
             put("top_p", settings.topP.first())
             put("top_k", settings.topK.first())
-            put("num_predict", settings.numPredict.first())
-            put("num_ctx", settings.numCtx.first())
+            put("num_predict", if (turbo) TurboProfile.NUM_PREDICT else settings.numPredict.first())
+            put("num_ctx", if (turbo) TurboProfile.NUM_CTX else settings.numCtx.first())
         }
-        val keepAlive = settings.keepAlive.first()
-        val think = if (capabilities.thinking) settings.thinkEnabled.first() else false
+        // A long keep_alive is the single biggest win: an unloaded model costs
+        // seconds before anything happens.
+        val keepAlive = if (turbo) TurboProfile.KEEP_ALIVE else settings.keepAlive.first()
+        val think = when {
+            turbo -> false
+            capabilities.thinking -> settings.thinkEnabled.first()
+            else -> false
+        }
 
         // 3. Tool-calling loop.
         var working = messages
@@ -509,6 +526,22 @@ class ChatRepository(
         db.conversationDao().insert(Conversation(title = "", systemPrompt = systemPrompt, model = model))
 
     /** Removes a conversation and the image files its messages referenced. */
+    /**
+     * Deletes the conversations whose ephemeral countdown has run out.
+     * Returns how many were removed.
+     */
+    suspend fun purgeExpired(now: Long = System.currentTimeMillis()): Int {
+        val expired = db.conversationDao().listExpired(now)
+        expired.forEach { deleteConversation(it.id) }
+        if (expired.isNotEmpty()) {
+            DiagnosticLog.record("ephemeral", "${expired.size} conversation(s) expirée(s) supprimée(s)")
+        }
+        return expired.size
+    }
+
+    suspend fun setEphemeral(conversationId: Long, minutes: Int) =
+        db.conversationDao().setEphemeral(conversationId, minutes)
+
     private suspend fun deleteImagesOf(conversationId: Long) {
         db.messageDao().imagePathsFor(conversationId)
             .flatMap { it.orEmpty().lineSequence().filter(String::isNotBlank).toList() }

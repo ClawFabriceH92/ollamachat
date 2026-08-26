@@ -240,6 +240,31 @@ fun SettingsScreen(
             Hint(stringResource(R.string.settings_brave_help))
 
             HorizontalDivider()
+            SectionTitle(stringResource(R.string.settings_section_turbo))
+            SwitchRow(
+                label = stringResource(R.string.settings_turbo),
+                checked = state.turboEnabled,
+                onChange = vm::onTurboEnabledChange,
+            )
+            Hint(stringResource(R.string.settings_turbo_help))
+            if (state.turboEnabled) {
+                Text(
+                    stringResource(R.string.settings_turbo_warning),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            OutlinedTextField(
+                value = state.turboModel,
+                onValueChange = vm::onTurboModelChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text(stringResource(R.string.settings_turbo_model)) },
+                placeholder = { Text(state.model.ifBlank { "qwen3:1.7b" }) },
+                singleLine = true,
+            )
+            Hint(stringResource(R.string.settings_turbo_model_help))
+
+            HorizontalDivider()
             SectionTitle(stringResource(R.string.settings_section_generation))
 
             SliderField(
