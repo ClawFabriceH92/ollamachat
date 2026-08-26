@@ -11,8 +11,67 @@ permissions:
   contents: write
 
 jobs:
+  # Real device tests on an emulator: Room migrations, the SQLCipher upgrade
+  # and the R8-minified build are things only a running Android can confirm.
+  instrumented:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle.kts', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Two separate invocations on purpose: the Room schemas are written by
+      # KSP during assembleDebug, and the androidTest assets that reference
+      # them are merged in the next one.
+      - name: Pre-build (outside the emulator)
+        run: |
+          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebugAndroidTest --no-daemon
+
+      - name: Instrumented tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: ./gradlew connectedDebugAndroidTest --no-daemon
+
+      - name: Upload instrumented test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: androidtest-report
+          path: app/build/reports/androidTests/
+          if-no-files-found: ignore
+
   build:
     runs-on: ubuntu-latest
+    needs: instrumented
     env:
       OLLAMACHAT_KEYSTORE_B64: ${{ secrets.OLLAMACHAT_KEYSTORE_B64 }}
       OLLAMACHAT_KEYSTORE_PASSWORD: ${{ secrets.OLLAMACHAT_KEYSTORE_PASSWORD }}

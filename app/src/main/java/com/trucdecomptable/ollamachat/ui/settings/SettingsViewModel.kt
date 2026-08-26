@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.trucdecomptable.ollamachat.AppContainer
 import com.trucdecomptable.ollamachat.R
+import com.trucdecomptable.ollamachat.data.mcp.McpClient
 import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
 import com.trucdecomptable.ollamachat.data.ollama.NetworkScanner
 import com.trucdecomptable.ollamachat.data.prefs.McpServer
@@ -144,12 +145,16 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         if (n.isEmpty() || u.isEmpty()) return
         viewModelScope.launch {
             settings.setMcpServers(settings.mcpServers.first() + McpServer(n, u))
+            // Sessions and tool lists are cached per server: a changed list
+            // must not keep answering from the old one.
+            McpClient.invalidate()
         }
     }
 
     fun removeMcpServer(server: McpServer) {
         viewModelScope.launch {
             settings.setMcpServers(settings.mcpServers.first().filter { it != server })
+            McpClient.invalidate(server.url)
         }
     }
 
