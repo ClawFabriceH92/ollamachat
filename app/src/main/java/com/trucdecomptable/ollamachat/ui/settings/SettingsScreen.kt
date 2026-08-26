@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -67,7 +68,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.trucdecomptable.ollamachat.OllamaChatApp
 import com.trucdecomptable.ollamachat.R
+import com.trucdecomptable.ollamachat.BuildConfig
 import com.trucdecomptable.ollamachat.data.backup.BackupCrypto
+import com.trucdecomptable.ollamachat.data.repo.EphemeralPolicy
+import com.trucdecomptable.ollamachat.update.UpdateManager
 import com.trucdecomptable.ollamachat.ui.theme.dynamicColorAvailable
 import com.trucdecomptable.ollamachat.ui.chat.resolve
 import com.trucdecomptable.ollamachat.util.DiagnosticLog
@@ -388,6 +392,32 @@ fun SettingsScreen(
 
             HorizontalDivider()
             SectionTitle(stringResource(R.string.settings_section_data))
+            Text(
+                text = stringResource(R.string.settings_default_ephemeral),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                EphemeralPolicy.PRESETS.forEach { minutes ->
+                    val selected = minutes == state.defaultEphemeralMinutes
+                    TextButton(onClick = { vm.onDefaultEphemeralChange(minutes) }) {
+                        Text(
+                            text = when {
+                                minutes <= 0 -> stringResource(R.string.ephemeral_off)
+                                minutes < 60 -> stringResource(R.string.ephemeral_minutes, minutes)
+                                else -> stringResource(R.string.ephemeral_hours, minutes / 60)
+                            },
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (selected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            Hint(stringResource(R.string.settings_default_ephemeral_help))
+
             OutlinedButton(
                 onClick = { exportLauncher.launch("ollamachat-sauvegarde.ocb") },
                 enabled = !state.backupBusy,
@@ -414,6 +444,14 @@ fun SettingsScreen(
                 Text(stringResource(R.string.settings_diagnostics_clear))
             }
             Hint(stringResource(R.string.settings_diagnostics_help))
+
+            HorizontalDivider()
+            SectionTitle(stringResource(R.string.settings_section_update))
+            Hint(stringResource(R.string.settings_current_version, BuildConfig.VERSION_NAME))
+            OutlinedButton(
+                onClick = { UpdateManager.checkNow() },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(stringResource(R.string.settings_check_update)) }
 
             Spacer(Modifier.height(24.dp))
         }

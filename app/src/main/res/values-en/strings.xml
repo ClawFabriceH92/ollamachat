@@ -3,6 +3,7 @@
     <!-- Actions -->
     <string name="action_ok">OK</string>
     <string name="action_cancel">Cancel</string>
+    <string name="action_later">Later</string>
     <string name="action_close">Close</string>
     <string name="action_add">Add</string>
     <string name="action_delete">Delete</string>
@@ -258,6 +259,25 @@
     <string name="ephemeral_badge">ephemeral</string>
     <string name="ephemeral_set">Auto-delete set to %1$s</string>
     <string name="ephemeral_cleared">Auto-delete turned off</string>
+
+    <!-- Update -->
+    <string name="update_available_title">Update available</string>
+    <string name="update_available_body">OllamaChat %1$s is available. You are running %2$s.</string>
+    <string name="update_now">Update</string>
+    <string name="update_later">Later</string>
+    <string name="update_downloading">Downloading %1$s…</string>
+    <string name="update_ready_title">Ready to install</string>
+    <string name="update_ready_body">%1$s has been downloaded. Android will ask you to confirm.</string>
+    <string name="update_install">Install</string>
+    <string name="update_failed_title">Update failed</string>
+    <string name="update_permission_body">Android must first allow this app to install packages.</string>
+    <string name="update_open_settings">Open the setting</string>
+    <string name="update_up_to_date">You are already up to date (%1$s)</string>
+    <string name="settings_section_update">Update</string>
+    <string name="settings_current_version">Installed version: %1$s</string>
+    <string name="settings_check_update">Check for an update</string>
+    <string name="settings_default_ephemeral">Default auto-delete</string>
+    <string name="settings_default_ephemeral_help">Applies to new conversations. An existing conversation is set from its ⋮ menu.</string>
 
     <!-- Notifications -->
     <string name="notification_channel_generation">Generation in progress</string>

@@ -50,6 +50,7 @@ data class SettingsUiState(
     val dynamicColor: Boolean = false,
     val turboEnabled: Boolean = false,
     val turboModel: String = "",
+    val defaultEphemeralMinutes: Int = 0,
     val models: List<ModelInfo> = emptyList(),
     val testing: Boolean = false,
     val testResult: String? = null,
@@ -110,6 +111,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             dynamicColor = snap.dynamicColor,
             turboEnabled = snap.turboEnabled,
             turboModel = snap.turboModel,
+            defaultEphemeralMinutes = snap.defaultEphemeralMinutes,
             models = tr.models,
             testing = tr.testing,
             testResult = tr.testResult,
@@ -152,6 +154,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun onToolsEnabledChange(v: Boolean) = launchSetting { settings.setToolsEnabled(v) }
     fun onDynamicColorChange(v: Boolean) = launchSetting { settings.setDynamicColor(v) }
     fun onTurboModelChange(v: String) = launchSetting { settings.setTurboModel(v.trim()) }
+    fun onDefaultEphemeralChange(v: Int) = launchSetting { settings.setDefaultEphemeralMinutes(v) }
     fun onFirstLaunchDone() = launchSetting { settings.setFirstLaunchDone(true) }
 
     /** Enabling turbo also warms the model up, so the next message skips the load. */

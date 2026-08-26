@@ -31,6 +31,7 @@ import com.trucdecomptable.ollamachat.ui.conversations.ConversationsScreen
 import com.trucdecomptable.ollamachat.ui.lock.LockScreen
 import com.trucdecomptable.ollamachat.ui.settings.SettingsScreen
 import com.trucdecomptable.ollamachat.ui.theme.OllamaChatTheme
+import com.trucdecomptable.ollamachat.ui.update.UpdateDialog
 import com.trucdecomptable.ollamachat.ui.welcome.WelcomeScreen
 import com.trucdecomptable.ollamachat.update.UpdateManager
 import com.trucdecomptable.ollamachat.util.PinUtils
@@ -47,13 +48,20 @@ class MainActivity : FragmentActivity() {
         val container = (application as OllamaChatApp).container
         val settings = container.settings
 
-        UpdateManager.start(this)
+
 
         setContent {
             val themePref by settings.theme.collectAsState(initial = "system")
             val firstLaunchDone by settings.firstLaunchDone.collectAsState(initial = false)
             val lockConfig by settings.lockConfig.collectAsState(initial = null)
             val dynamicColor by settings.dynamicColor.collectAsState(initial = false)
+            val updateState by UpdateManager.state.collectAsState()
+
+            // Checked once per launch, and never re-offering a version the
+            // user already put off.
+            LaunchedEffect(Unit) {
+                UpdateManager.checkAtLaunch(settings.skippedUpdate.first())
+            }
             val unlocked by AuthManager.unlocked.collectAsState()
 
             val darkTheme = when (themePref) {
@@ -126,6 +134,16 @@ class MainActivity : FragmentActivity() {
                         SettingsScreen(onBack = { navController.popBackStack() })
                     }
                 }
+
+                UpdateDialog(
+                    state = updateState,
+                    context = this@MainActivity,
+                    onSkip = { version ->
+                        lifecycleScope.launch { settings.setSkippedUpdate(version) }
+                        UpdateManager.dismiss()
+                    },
+                    onDismiss = { UpdateManager.dismiss() },
+                )
 
                 // Lock gate: full-screen PIN/biometric overlay when enabled & locked.
                 val lock = lockConfig

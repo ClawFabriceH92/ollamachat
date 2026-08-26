@@ -5,6 +5,7 @@
     <!-- Actions -->
     <string name="action_ok">OK</string>
     <string name="action_cancel">Annuler</string>
+    <string name="action_later">Plus tard</string>
     <string name="action_close">Fermer</string>
     <string name="action_add">Ajouter</string>
     <string name="action_delete">Supprimer</string>
@@ -260,6 +261,25 @@
     <string name="ephemeral_badge">éphémère</string>
     <string name="ephemeral_set">Effacement dans %1$s activé</string>
     <string name="ephemeral_cleared">Effacement automatique désactivé</string>
+
+    <!-- Mise à jour -->
+    <string name="update_available_title">Mise à jour disponible</string>
+    <string name="update_available_body">OllamaChat %1$s est disponible. Tu utilises la %2$s.</string>
+    <string name="update_now">Mettre à jour</string>
+    <string name="update_later">Plus tard</string>
+    <string name="update_downloading">Téléchargement de la %1$s…</string>
+    <string name="update_ready_title">Prêt à installer</string>
+    <string name="update_ready_body">La %1$s est téléchargée. Android va demander confirmation.</string>
+    <string name="update_install">Installer</string>
+    <string name="update_failed_title">Échec de la mise à jour</string>
+    <string name="update_permission_body">Android doit d’abord autoriser cette application à installer des paquets.</string>
+    <string name="update_open_settings">Ouvrir le réglage</string>
+    <string name="update_up_to_date">Tu es déjà à jour (%1$s)</string>
+    <string name="settings_section_update">Mise à jour</string>
+    <string name="settings_current_version">Version installée : %1$s</string>
+    <string name="settings_check_update">Rechercher une mise à jour</string>
+    <string name="settings_default_ephemeral">Effacement automatique par défaut</string>
+    <string name="settings_default_ephemeral_help">S’applique aux nouvelles conversations. Le réglage d’une conversation existante se trouve dans son menu ⋮.</string>
 
     <!-- Notifications -->
     <string name="notification_channel_generation">Génération en cours</string>
