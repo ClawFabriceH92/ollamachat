@@ -1,4 +1,204 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">OllamaChat</string>
+    <string name="app_name" translatable="false">OllamaChat</string>
+
+    <!-- Actions -->
+    <string name="action_ok">OK</string>
+    <string name="action_cancel">Annuler</string>
+    <string name="action_close">Fermer</string>
+    <string name="action_add">Ajouter</string>
+    <string name="action_delete">Supprimer</string>
+    <string name="action_rename">Renommer</string>
+    <string name="action_back">Retour</string>
+    <string name="action_settings">Réglages</string>
+    <string name="action_menu">Menu</string>
+    <string name="action_send">Envoyer</string>
+    <string name="action_stop">Arrêter</string>
+    <string name="action_copy">Copier</string>
+    <string name="action_copy_code">Copier le code</string>
+    <string name="action_edit">Modifier</string>
+    <string name="action_regenerate">Régénérer</string>
+    <string name="action_archive">Archiver</string>
+    <string name="action_restore">Restaurer</string>
+    <string name="action_search">Rechercher</string>
+    <string name="action_clear_search">Effacer la recherche</string>
+    <string name="action_scroll_bottom">Aller en bas</string>
+
+    <!-- Conversations -->
+    <string name="conversations_title">Conversations</string>
+    <string name="conversations_tab_active">Actives</string>
+    <string name="conversations_tab_archived">Archivées</string>
+    <string name="conversations_new">Nouvelle conversation</string>
+    <string name="conversations_empty">Aucune conversation.\nTouche + pour en créer une.</string>
+    <string name="conversations_archived_empty">Aucune conversation archivée.</string>
+    <string name="conversations_search_hint">Rechercher dans les conversations…</string>
+    <string name="conversations_search_empty">Aucun résultat pour « %1$s ».</string>
+    <string name="conversations_delete_title">Supprimer définitivement ?</string>
+    <string name="conversations_delete_body">« %1$s » et tous ses messages seront effacés. Action irréversible.</string>
+
+    <!-- Chat -->
+    <string name="chat_new_conversation">Nouvelle conversation</string>
+    <string name="chat_model_undefined">modèle non défini</string>
+    <string name="chat_input_placeholder">Écrire un message…</string>
+    <string name="chat_attach">Importer un document</string>
+    <string name="chat_search_web">Rechercher sur le web</string>
+    <string name="chat_answering">En train de répondre…</string>
+    <string name="chat_reasoning">Raisonnement</string>
+    <string name="chat_image_sent">Image</string>
+    <string name="chat_tool_label">Outil « %1$s »</string>
+    <string name="chat_stats">%1$s</string>
+    <string name="chat_empty">Pose ta première question.</string>
+
+    <string name="chat_menu_system_prompt">Prompt système…</string>
+    <string name="chat_menu_model">Changer de modèle…</string>
+    <string name="chat_menu_memory">Mémoire…</string>
+    <string name="chat_menu_export">Exporter la conversation…</string>
+    <string name="chat_menu_read_url">Lire une page web…</string>
+    <string name="chat_menu_clear">Vider la conversation</string>
+    <string name="chat_menu_delete">Supprimer définitivement</string>
+
+    <string name="chat_rename_title">Renommer la conversation</string>
+    <string name="chat_system_prompt_title">Prompt système de cette conversation</string>
+    <string name="chat_model_title">Modèle de cette conversation</string>
+    <string name="chat_model_empty">Aucun modèle — vérifie la connexion au serveur</string>
+    <string name="chat_delete_title">Supprimer définitivement ?</string>
+    <string name="chat_delete_body">Tous les messages de cette conversation seront effacés. Action irréversible.</string>
+    <string name="chat_clear_title">Vider la conversation ?</string>
+    <string name="chat_clear_body">Les messages seront effacés mais la conversation sera conservée.</string>
+    <string name="chat_edit_title">Modifier le message</string>
+    <string name="chat_edit_body">Le message sera renvoyé et la suite de la conversation sera remplacée.</string>
+
+    <string name="chat_url_title">Lire une page web</string>
+    <string name="chat_url_label">URL</string>
+    <string name="chat_url_hint">Le contenu de la page sera ajouté à la conversation, puis tu poses ta question dessus.</string>
+    <string name="chat_url_confirm">Lire</string>
+
+    <string name="chat_memory_title">Mémoire persistante</string>
+    <string name="chat_memory_hint">Ces faits sont injectés dans chaque conversation pour que le modèle te connaisse.</string>
+    <string name="chat_memory_new">Nouveau fait à retenir</string>
+    <string name="chat_memory_empty">Aucune mémoire pour l’instant.</string>
+
+    <string name="chat_export_subject">Conversation OllamaChat</string>
+    <string name="chat_export_chooser">Exporter la conversation</string>
+
+    <!-- Toasts -->
+    <string name="toast_busy">Réponse en cours — patiente un instant</string>
+    <string name="toast_stopped">Réponse interrompue — le texte généré est conservé</string>
+    <string name="toast_searching">Recherche web en cours…</string>
+    <string name="toast_search_empty">Recherche infructueuse — essaie une autre formulation</string>
+    <string name="toast_reading_page">Lecture de la page…</string>
+    <string name="toast_page_read">Page lue — pose ta question dessus</string>
+    <string name="toast_page_failed">Échec de lecture : %1$s</string>
+    <string name="toast_image_added">Image ajoutée — envoie ta question</string>
+    <string name="toast_image_failed">Impossible d’enregistrer l’image</string>
+    <string name="toast_document_imported">Document importé — pose ta question dessus</string>
+    <string name="toast_copied">Copié</string>
+    <string name="toast_export_failed">Aucune application pour partager le fichier</string>
+
+    <!-- Errors -->
+    <string name="error_connection">Serveur injoignable — vérifie l’adresse et le réseau</string>
+    <string name="error_timeout">Le serveur met trop de temps à répondre</string>
+    <string name="error_http">Le serveur a refusé la requête (%1$s)</string>
+    <string name="error_server">Erreur du serveur : %1$s</string>
+    <string name="error_empty">Le modèle n’a pas produit de réponse</string>
+    <string name="error_no_model">Aucun modèle sélectionné — ouvre les réglages</string>
+    <string name="error_no_conversation">Conversation introuvable</string>
+    <string name="error_unknown">Erreur inattendue : %1$s</string>
+    <string name="error_generic">Erreur inattendue</string>
+
+    <!-- Lock -->
+    <string name="lock_title">Application verrouillée</string>
+    <string name="lock_enter_pin">Saisis ton code</string>
+    <string name="lock_wrong_pin">Code incorrect</string>
+    <string name="lock_locked_out">Trop d’essais — réessaie dans %1$d s</string>
+    <string name="lock_biometric">Déverrouiller par biométrie</string>
+    <string name="lock_biometric_title">Déverrouiller OllamaChat</string>
+    <string name="lock_biometric_subtitle">Utilise ton empreinte ou ton visage</string>
+    <string name="lock_backspace">Effacer</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Réglages</string>
+    <string name="settings_section_connection">Connexion</string>
+    <string name="settings_server_url">Adresse du serveur Ollama</string>
+    <string name="settings_server_url_hint">http://192.168.1.50:11434</string>
+    <string name="settings_scan">Détecter automatiquement un serveur Ollama</string>
+    <string name="settings_scanning">Scan du réseau en cours…</string>
+    <string name="settings_test">Tester la connexion</string>
+    <string name="settings_testing">Test…</string>
+    <string name="settings_test_ok">Connexion établie</string>
+    <string name="settings_test_failed">Échec : %1$s</string>
+    <string name="settings_model">Modèle</string>
+    <string name="settings_model_empty">Aucun modèle — tester la connexion</string>
+    <string name="settings_model_refresh">Rafraîchir la liste des modèles</string>
+
+    <string name="settings_section_web">Recherche web</string>
+    <string name="settings_brave_key">Clé API Brave (optionnel)</string>
+    <string name="settings_brave_key_hint">Sans clé : recherche Wikipedia seulement</string>
+    <string name="settings_brave_help">Clé gratuite sur api.search.brave.com (2000 requêtes/mois). Elle est chiffrée sur l’appareil.</string>
+    <string name="settings_show_key">Afficher la clé</string>
+    <string name="settings_hide_key">Masquer la clé</string>
+
+    <string name="settings_section_generation">Génération</string>
+    <string name="settings_temperature">Température</string>
+    <string name="settings_top_p">top_p</string>
+    <string name="settings_top_k">top_k</string>
+    <string name="settings_num_predict">Max tokens (num_predict)</string>
+    <string name="settings_num_ctx">Contexte (num_ctx)</string>
+    <string name="settings_keep_alive">Keep alive (ex. 5m, -1 = toujours)</string>
+    <string name="settings_streaming">Streaming (réponse en direct)</string>
+    <string name="settings_compact">Compacter automatiquement le contexte</string>
+    <string name="settings_compact_help">Quand le contexte est plein, les anciens messages sont résumés. Ils restent visibles dans la conversation.</string>
+    <string name="settings_think">Mode réfléchi (plus profond, réponse plus lente)</string>
+    <string name="settings_think_help">Désactivé par défaut : réponse immédiate. À activer pour les questions complexes, si le modèle le supporte.</string>
+    <string name="settings_tools">Autoriser les outils (web, URL, météo, calcul, MCP)</string>
+    <string name="settings_tools_help">Les outils ne sont proposés qu’aux modèles qui les supportent. Le contenu récupéré sur le web est traité comme de la donnée, jamais comme des instructions.</string>
+
+    <string name="settings_section_mcp">Serveurs MCP (outils externes)</string>
+    <string name="settings_mcp_add">Ajouter un serveur MCP</string>
+    <string name="settings_mcp_help">Le modèle pourra utiliser les outils des serveurs MCP (streamable HTTP, ex. http://IP:PORT/mcp).</string>
+    <string name="settings_mcp_name">Nom (ex. météo)</string>
+    <string name="settings_mcp_url">URL du serveur</string>
+
+    <string name="settings_section_prompt">Prompt système par défaut</string>
+    <string name="settings_section_appearance">Apparence</string>
+    <string name="settings_theme">Thème</string>
+    <string name="settings_theme_system">Système</string>
+    <string name="settings_theme_light">Clair</string>
+    <string name="settings_theme_dark">Sombre</string>
+
+    <string name="settings_section_security">Sécurité</string>
+    <string name="settings_lock">Verrouiller l’app (PIN ou biométrie)</string>
+    <string name="settings_lock_background">Verrouiller à la mise en arrière-plan</string>
+    <string name="settings_set_pin">Définir un code</string>
+    <string name="settings_change_pin">Changer le code</string>
+    <string name="settings_lock_needs_pin">Définis un code pour activer le verrouillage.</string>
+    <string name="settings_security_help">Les conversations restent stockées sur l’appareil. La sauvegarde système est désactivée et l’aperçu multitâche est masqué quand le verrou est actif.</string>
+
+    <string name="pin_dialog_title">Code de l’application</string>
+    <string name="pin_old">Ancien code</string>
+    <string name="pin_new">Nouveau code (4 à 8 chiffres)</string>
+    <string name="pin_confirm">Confirmer le code</string>
+    <string name="pin_error_invalid">Le code doit contenir 4 à 8 chiffres</string>
+    <string name="pin_error_mismatch">Les deux codes ne correspondent pas</string>
+    <string name="pin_error_wrong_old">Ancien code incorrect</string>
+    <string name="pin_changed">Code enregistré</string>
+
+    <!-- Welcome -->
+    <string name="welcome_title">Bienvenue</string>
+    <string name="welcome_subtitle">Connecte l’app à ton serveur Ollama.</string>
+    <string name="welcome_continue">Continuer</string>
+    <string name="welcome_finish">Commencer</string>
+
+    <string name="welcome_connected">Connexion établie</string>
+    <string name="welcome_pick_model">Choisis le modèle par défaut :</string>
+    <string name="welcome_no_models">Aucun modèle installé sur le serveur — installes-en un, puis réessaie.</string>
+    <string name="welcome_retest">Re-tester la connexion</string>
+
+    <!-- Notifications -->
+    <string name="notification_channel_generation">Génération en cours</string>
+    <string name="notification_channel_updates">Mises à jour</string>
+    <string name="notification_generating_title">OllamaChat répond…</string>
+    <string name="notification_generating_text">La réponse continue même si l’app est en arrière-plan.</string>
+    <string name="notification_update_available">OllamaChat v%1$s disponible</string>
+    <string name="notification_update_downloading">Mise à jour v%1$s en cours de téléchargement…</string>
 </resources>

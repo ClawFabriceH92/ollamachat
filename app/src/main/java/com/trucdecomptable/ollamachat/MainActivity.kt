@@ -1,15 +1,21 @@
 package com.trucdecomptable.ollamachat
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.view.WindowManager
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.fragment.app.FragmentActivity
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
@@ -27,8 +33,11 @@ import com.trucdecomptable.ollamachat.ui.settings.SettingsScreen
 import com.trucdecomptable.ollamachat.ui.theme.OllamaChatTheme
 import com.trucdecomptable.ollamachat.ui.welcome.WelcomeScreen
 import com.trucdecomptable.ollamachat.update.UpdateManager
+import com.trucdecomptable.ollamachat.util.PinUtils
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : FragmentActivity() {
 
@@ -36,12 +45,11 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
 
         val container = (application as OllamaChatApp).container
+        val settings = container.settings
 
-        // Auto-update check at launch (release builds only).
         UpdateManager.start(this)
 
         setContent {
-            val settings = container.settings
             val themePref by settings.theme.collectAsState(initial = "system")
             val firstLaunchDone by settings.firstLaunchDone.collectAsState(initial = false)
             val lockConfig by settings.lockConfig.collectAsState(initial = null)
@@ -50,13 +58,38 @@ class MainActivity : FragmentActivity() {
             val darkTheme = when (themePref) {
                 "light" -> false
                 "dark" -> true
-                else -> androidx.compose.foundation.isSystemInDarkTheme()
+                else -> isSystemInDarkTheme()
+            }
+
+            // Ask once for notifications: without it the update notice and the
+            // "generating" foreground notice are silently dropped on Android 13+.
+            val notificationLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission()
+            ) { }
+            LaunchedEffect(Unit) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    ContextCompat.checkSelfPermission(
+                        this@MainActivity,
+                        Manifest.permission.POST_NOTIFICATIONS,
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+
+            // Keep conversations out of the recent-apps preview while the
+            // lock is on — a lock that only covers the running app is theatre.
+            val lockEnabled = lockConfig?.active == true
+            LaunchedEffect(lockEnabled) {
+                if (lockEnabled) window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
             }
 
             OllamaChatTheme(darkTheme = darkTheme) {
                 val navController = rememberNavController()
-
-                var biometricAvailable by remember { mutableStateOf(BiometricHelper.isAvailable(this@MainActivity)) }
+                val biometricAvailable = remember {
+                    mutableStateOf(BiometricHelper.isAvailable(this@MainActivity))
+                }
 
                 NavHost(
                     navController = navController,
@@ -73,9 +106,7 @@ class MainActivity : FragmentActivity() {
                     }
                     composable("conversations") {
                         ConversationsScreen(
-                            onOpenConversation = { id ->
-                                navController.navigate("chat/$id")
-                            },
+                            onOpenConversation = { id -> navController.navigate("chat/$id") },
                             onOpenSettings = { navController.navigate("settings") },
                         )
                     }
@@ -97,15 +128,34 @@ class MainActivity : FragmentActivity() {
 
                 // Lock gate: full-screen PIN/biometric overlay when enabled & locked.
                 val lock = lockConfig
-                if (lock?.enabled == true && !unlocked) {
+                if (lock != null && lock.active && !unlocked) {
                     LockScreen(
-                        expectedHash = lock.pinHash,
-                        biometricAvailable = biometricAvailable,
-                        onUnlock = { AuthManager.unlock() },
+                        biometricAvailable = biometricAvailable.value,
+                        lockedUntil = lock.lockedUntil,
+                        onSubmit = { pin ->
+                            // PBKDF2 is intentionally slow: never on the main thread.
+                            val ok = withContext(Dispatchers.Default) {
+                                PinUtils.verify(pin, lock.pinHash)
+                            }
+                            if (ok) {
+                                if (PinUtils.needsUpgrade(lock.pinHash)) {
+                                    val upgraded = withContext(Dispatchers.Default) { PinUtils.hash(pin) }
+                                    settings.setPinHash(upgraded)
+                                }
+                                settings.clearFailedUnlocks()
+                                AuthManager.unlock()
+                            } else {
+                                settings.recordFailedUnlock()
+                            }
+                            ok
+                        },
                         onBiometric = {
                             BiometricHelper.authenticate(
                                 activity = this@MainActivity,
-                                onSuccess = { AuthManager.unlock() },
+                                onSuccess = {
+                                    lifecycleScope.launch { settings.clearFailedUnlocks() }
+                                    AuthManager.unlock()
+                                },
                             )
                         },
                     )
@@ -117,8 +167,8 @@ class MainActivity : FragmentActivity() {
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP && !isChangingConfigurations) {
                 lifecycleScope.launch {
-                    val lock = container.settings.lockConfig.first()
-                    if (lock.enabled && lock.lockOnBackground) AuthManager.lock()
+                    val lock = settings.lockConfig.first()
+                    if (lock.active && lock.lockOnBackground) AuthManager.lock()
                 }
             }
         })

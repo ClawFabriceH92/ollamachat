@@ -4,6 +4,7 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import com.trucdecomptable.ollamachat.R
 
 object BiometricHelper {
 
@@ -16,8 +17,8 @@ object BiometricHelper {
     /** Shows the system biometric prompt; calls [onSuccess] when authenticated. */
     fun authenticate(
         activity: FragmentActivity,
-        title: String = "Déverrouiller OllamaChat",
-        subtitle: String = "Utilisez votre empreinte ou votre visage",
+        title: String = activity.getString(R.string.lock_biometric_title),
+        subtitle: String = activity.getString(R.string.lock_biometric_subtitle),
         onSuccess: () -> Unit,
         onError: (Int, String) -> Unit = { _, _ -> },
     ) {
@@ -42,7 +43,7 @@ object BiometricHelper {
         val info = BiometricPrompt.PromptInfo.Builder()
             .setTitle(title)
             .setSubtitle(subtitle)
-            .setNegativeButtonText("Annuler")
+            .setNegativeButtonText(activity.getString(R.string.action_cancel))
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK)
             .build()
         prompt.authenticate(info)

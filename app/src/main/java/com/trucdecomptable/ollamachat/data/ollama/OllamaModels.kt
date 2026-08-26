@@ -1,6 +1,5 @@
 package com.trucdecomptable.ollamachat.data.ollama
 
-import org.json.JSONArray
 import org.json.JSONObject
 
 /** A model entry returned by GET /api/tags. */
@@ -11,7 +10,7 @@ data class ModelInfo(
 ) {
     companion object {
         fun fromJson(obj: JSONObject): ModelInfo = ModelInfo(
-            name = obj.getString("name"),
+            name = obj.optString("name", obj.optString("model", "")),
             sizeBytes = obj.optLong("size", 0L),
             modifiedAt = obj.optString("modified_at", ""),
         )
@@ -24,6 +23,7 @@ data class OllamaChatMessage(
     val content: String,
     val images: List<String> = emptyList(), // base64-encoded images
     val toolCalls: List<ToolCall> = emptyList(),
+    val toolName: String? = null,           // set on role = tool
 )
 
 /** A tool call requested by the model. */
@@ -43,23 +43,41 @@ data class ToolDef(
 data class OllamaChatChunk(
     val done: Boolean,
     val content: String,
+    val thinking: String = "",
     val error: String? = null,
 )
 
-/** Capabilities reported by GET /api/show. */
+/** Capabilities reported by POST /api/show. */
 data class ModelCapabilities(
-    val vision: Boolean,
+    val vision: Boolean = false,
+    val tools: Boolean = false,
+    val thinking: Boolean = false,
 )
+
+/** What went wrong, as a code the UI turns into a localized message. */
+enum class ChatErrorCode {
+    CONNECTION,     // server unreachable
+    TIMEOUT,        // server reachable but too slow
+    HTTP,           // non-2xx without a usable body
+    SERVER,         // Ollama reported an error (detail carries its text)
+    EMPTY,          // no content at all
+    NO_MODEL,       // no model selected
+    NO_CONVERSATION,
+    UNKNOWN,
+}
+
+data class ChatError(val code: ChatErrorCode, val detail: String? = null)
 
 /** Result of a chat stream, including optional tool calls and generation stats. */
 data class ChatStreamResult(
     val fullText: String,
+    val thinking: String = "",
     val toolCalls: List<ToolCall> = emptyList(),
     val tokPerSec: Double? = null,
     val evalCount: Int? = null,
     val promptEvalCount: Int? = null,
     val cancelled: Boolean = false,
-    val error: String? = null,
+    val error: ChatError? = null,
 ) {
     /** Short human-readable stats line, e.g. "42 tok/s · 850 tokens". */
     fun statsLine(): String? {
@@ -71,28 +89,4 @@ data class ChatStreamResult(
         if (n != null) parts.add("$n tokens")
         return parts.joinToString(" · ")
     }
-}
-
-/** JSON helpers used by the client. */
-fun JSONObject.putTools(tools: List<ToolDef>): JSONObject {
-    if (tools.isEmpty()) return this
-    val arr = JSONArray()
-    tools.forEach { t ->
-        arr.put(
-            JSONObject().apply {
-                put(
-                    "type", "function"
-                )
-                put(
-                    "function", JSONObject().apply {
-                        put("name", t.name)
-                        put("description", t.description)
-                        put("parameters", JSONObject(t.parametersJson))
-                    }
-                )
-            }
-        )
-    }
-    put("tools", arr)
-    return this
 }

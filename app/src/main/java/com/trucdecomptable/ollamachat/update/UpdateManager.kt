@@ -36,11 +36,11 @@ object UpdateManager {
             val info = UpdateChecker.checkForUpdate() ?: return@launch
             if (canRequestInstalls(context)) {
                 AutoUpdater.download(context, info.apkUrl, info.version)
-                notify(context, "Mise à jour v${info.version} en cours de téléchargement…")
+                notify(context, context.getString(R.string.notification_update_downloading, info.version))
             } else {
                 notify(
                     context,
-                    "OllamaChat v${info.version} disponible",
+                    context.getString(R.string.notification_update_available, info.version),
                     info.notes,
                     installSettingsPendingIntent(context),
                 )
@@ -57,7 +57,7 @@ object UpdateManager {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Mises à jour",
+            context.getString(R.string.notification_channel_updates),
             NotificationManager.IMPORTANCE_DEFAULT,
         )
         nm.createNotificationChannel(channel)

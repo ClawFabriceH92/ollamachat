@@ -9,11 +9,31 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ConversationDao {
-    @Query("SELECT * FROM conversations WHERE archived = 0 ORDER BY updatedAt DESC")
-    fun observeActive(): Flow<List<Conversation>>
-
-    @Query("SELECT * FROM conversations WHERE archived = 1 ORDER BY updatedAt DESC")
-    fun observeArchived(): Flow<List<Conversation>>
+    /**
+     * Conversation list with a preview of the last real message.
+     * [query] empty means "no filter"; otherwise it matches the title or any
+     * message body.
+     */
+    @Query(
+        """
+        SELECT c.id AS id,
+               c.title AS title,
+               c.updatedAt AS updatedAt,
+               c.archived AS archived,
+               (SELECT m.content FROM messages m
+                 WHERE m.conversationId = c.id AND m.role IN ('user', 'assistant')
+                 ORDER BY m.createdAt DESC, m.id DESC LIMIT 1) AS preview
+        FROM conversations c
+        WHERE c.archived = :archived
+          AND (:query = ''
+               OR c.title LIKE '%' || :query || '%'
+               OR EXISTS (SELECT 1 FROM messages m2
+                           WHERE m2.conversationId = c.id
+                             AND m2.content LIKE '%' || :query || '%'))
+        ORDER BY c.updatedAt DESC
+        """
+    )
+    fun observeSummaries(archived: Boolean, query: String): Flow<List<ConversationSummary>>
 
     @Query("SELECT * FROM conversations WHERE id = :id")
     fun observeById(id: Long): Flow<Conversation?>
@@ -30,6 +50,9 @@ interface ConversationDao {
     @Delete
     suspend fun delete(c: Conversation)
 
+    @Query("DELETE FROM conversations WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
     @Query("UPDATE conversations SET archived = :archived, updatedAt = :ts WHERE id = :id")
     suspend fun setArchived(id: Long, archived: Boolean, ts: Long = System.currentTimeMillis())
 
@@ -39,14 +62,36 @@ interface ConversationDao {
 
 @Dao
 interface MessageDao {
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC")
+    // createdAt has millisecond resolution, so two rows written in the same
+    // millisecond (a user message and the tool trace that follows it) would
+    // otherwise come back in arbitrary order — id breaks the tie.
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC, id ASC")
     fun observeForConversation(conversationId: Long): Flow<List<Message>>
 
-    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC")
+    @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC, id ASC")
     suspend fun listForConversation(conversationId: Long): List<Message>
+
+    /** History actually replayed to the model. */
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE conversationId = :conversationId AND excludedFromContext = 0
+        ORDER BY createdAt ASC, id ASC
+        """
+    )
+    suspend fun listForContext(conversationId: Long): List<Message>
 
     @Query("SELECT * FROM messages WHERE id = :id")
     suspend fun getById(id: Long): Message?
+
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE conversationId = :conversationId AND role = 'assistant'
+        ORDER BY createdAt DESC, id DESC LIMIT 1
+        """
+    )
+    suspend fun lastAssistant(conversationId: Long): Message?
 
     @Insert
     suspend fun insert(m: Message): Long
@@ -54,11 +99,24 @@ interface MessageDao {
     @Update
     suspend fun update(m: Message)
 
+    @Query("UPDATE messages SET excludedFromContext = 1 WHERE id IN (:ids)")
+    suspend fun excludeFromContext(ids: List<Long>)
+
     @Query("DELETE FROM messages WHERE conversationId = :conversationId")
     suspend fun deleteForConversation(conversationId: Long)
 
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    /** Deletes [fromId] and every message inserted after it (regenerate / edit). */
+    @Query("DELETE FROM messages WHERE conversationId = :conversationId AND id >= :fromId")
+    suspend fun deleteFrom(conversationId: Long, fromId: Long)
+
+    @Query("SELECT imagePath FROM messages WHERE conversationId = :conversationId AND imagePath IS NOT NULL")
+    suspend fun imagePathsFor(conversationId: Long): List<String?>
+
+    @Query("SELECT imagePath FROM messages WHERE imagePath IS NOT NULL")
+    suspend fun allImagePaths(): List<String?>
 }
 
 @Dao
@@ -66,8 +124,8 @@ interface MemoryDao {
     @Query("SELECT * FROM memories ORDER BY updatedAt DESC")
     fun observeAll(): Flow<List<Memory>>
 
-    @Query("SELECT * FROM memories ORDER BY updatedAt DESC")
-    suspend fun listAll(): List<Memory>
+    @Query("SELECT * FROM memories ORDER BY updatedAt DESC LIMIT :limit")
+    suspend fun listRecent(limit: Int): List<Memory>
 
     @Insert
     suspend fun insert(m: Memory): Long
