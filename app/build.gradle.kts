@@ -44,6 +44,10 @@ android {
         getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
+    // Instrumented tests exercise the shipped, minified build rather than a
+    // debug one that shares none of its risks.
+    testBuildType = "release"
+
     signingConfigs {
         create("release") {
             val ks = releaseKeystore()
@@ -60,11 +64,12 @@ android {
 
     buildTypes {
         release {
-            // SQLCipher ships a native library per ABI; phones are ARM, so the
-            // x86 pair only bloats the download. Debug keeps them for the
-            // emulator that runs the instrumented tests.
-            ndk { abiFilters += setOf("arm64-v8a", "armeabi-v7a") }
-            isMinifyEnabled = false
+            // R8 is no longer taken on faith: testBuildType above runs the
+            // instrumented tests against this very build. Every ABI stays in
+            // the APK so the x86_64 emulator can actually run it — trimming
+            // them would make the shipped build the one nothing tests.
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

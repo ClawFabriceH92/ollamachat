@@ -46,6 +46,7 @@ data class SettingsUiState(
     val mcpServers: List<McpServer> = emptyList(),
     val thinkEnabled: Boolean = false,
     val toolsEnabled: Boolean = true,
+    val dynamicColor: Boolean = false,
     val models: List<ModelInfo> = emptyList(),
     val testing: Boolean = false,
     val testResult: String? = null,
@@ -99,6 +100,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             mcpServers = snap.mcpServers,
             thinkEnabled = snap.thinkEnabled,
             toolsEnabled = snap.toolsEnabled,
+            dynamicColor = snap.dynamicColor,
             models = tr.models,
             testing = tr.testing,
             testResult = tr.testResult,
@@ -137,6 +139,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun onContextCompactEnabledChange(v: Boolean) = launchSetting { settings.setContextCompactEnabled(v) }
     fun onThinkEnabledChange(v: Boolean) = launchSetting { settings.setThinkEnabled(v) }
     fun onToolsEnabledChange(v: Boolean) = launchSetting { settings.setToolsEnabled(v) }
+    fun onDynamicColorChange(v: Boolean) = launchSetting { settings.setDynamicColor(v) }
     fun onFirstLaunchDone() = launchSetting { settings.setFirstLaunchDone(true) }
 
     /** Turning the lock on without a code would leave the app effectively open. */

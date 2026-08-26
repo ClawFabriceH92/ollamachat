@@ -219,6 +219,9 @@
     <string name="diagnostics_subject">Journal OllamaChat</string>
     <string name="diagnostics_cleared">Journal vidé</string>
 
+    <string name="settings_dynamic_color">Couleurs du fond d’écran</string>
+    <string name="settings_dynamic_color_help">Accorde l’app aux couleurs de ton fond d’écran (Android 12 et plus).</string>
+
     <!-- Notifications -->
     <string name="notification_channel_generation">Génération en cours</string>
     <string name="notification_channel_updates">Mises à jour</string>

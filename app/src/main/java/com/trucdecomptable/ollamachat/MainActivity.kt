@@ -53,6 +53,7 @@ class MainActivity : FragmentActivity() {
             val themePref by settings.theme.collectAsState(initial = "system")
             val firstLaunchDone by settings.firstLaunchDone.collectAsState(initial = false)
             val lockConfig by settings.lockConfig.collectAsState(initial = null)
+            val dynamicColor by settings.dynamicColor.collectAsState(initial = false)
             val unlocked by AuthManager.unlocked.collectAsState()
 
             val darkTheme = when (themePref) {
@@ -85,7 +86,7 @@ class MainActivity : FragmentActivity() {
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
             }
 
-            OllamaChatTheme(darkTheme = darkTheme) {
+            OllamaChatTheme(darkTheme = darkTheme, dynamicColor = dynamicColor) {
                 val navController = rememberNavController()
                 val biometricAvailable = remember {
                     mutableStateOf(BiometricHelper.isAvailable(this@MainActivity))

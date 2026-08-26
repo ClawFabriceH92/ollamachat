@@ -42,6 +42,7 @@ class SettingsRepository(private val context: Context) {
         val CONTEXT_COMPACT_ENABLED = booleanPreferencesKey("context_compact_enabled")
         val THINK_ENABLED = booleanPreferencesKey("think_enabled")
         val TOOLS_ENABLED = booleanPreferencesKey("tools_enabled")
+        val DYNAMIC_COLOR = booleanPreferencesKey("dynamic_color")
     }
 
     val defaults = Defaults()
@@ -65,6 +66,7 @@ class SettingsRepository(private val context: Context) {
         val contextCompactEnabled: Boolean = true
         val thinkEnabled: Boolean = false
         val toolsEnabled: Boolean = true
+        val dynamicColor: Boolean = false
     }
 
     // --- flows ---
@@ -105,6 +107,8 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.data.map { it[Keys.THINK_ENABLED] ?: defaults.thinkEnabled }
     val toolsEnabled: Flow<Boolean> =
         context.dataStore.data.map { it[Keys.TOOLS_ENABLED] ?: defaults.toolsEnabled }
+    val dynamicColor: Flow<Boolean> =
+        context.dataStore.data.map { it[Keys.DYNAMIC_COLOR] ?: defaults.dynamicColor }
     val mcpServers: Flow<List<McpServer>> =
         context.dataStore.data.map { parseMcpServers(it[Keys.MCP_SERVERS]) }
     val lockConfig: Flow<LockConfig> =
@@ -140,6 +144,7 @@ class SettingsRepository(private val context: Context) {
             mcpServers = parseMcpServers(p[Keys.MCP_SERVERS]),
             thinkEnabled = p[Keys.THINK_ENABLED] ?: defaults.thinkEnabled,
             toolsEnabled = p[Keys.TOOLS_ENABLED] ?: defaults.toolsEnabled,
+            dynamicColor = p[Keys.DYNAMIC_COLOR] ?: defaults.dynamicColor,
         )
     }
 
@@ -163,6 +168,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun setContextCompactEnabled(v: Boolean) = context.dataStore.edit { it[Keys.CONTEXT_COMPACT_ENABLED] = v }
     suspend fun setThinkEnabled(v: Boolean) = context.dataStore.edit { it[Keys.THINK_ENABLED] = v }
     suspend fun setToolsEnabled(v: Boolean) = context.dataStore.edit { it[Keys.TOOLS_ENABLED] = v }
+    suspend fun setDynamicColor(v: Boolean) = context.dataStore.edit { it[Keys.DYNAMIC_COLOR] = v }
 
     /** Encrypted at rest with an Android Keystore key. */
     suspend fun setBraveApiKey(v: String) =
@@ -259,4 +265,5 @@ data class SettingsSnapshot(
     val mcpServers: List<McpServer>,
     val thinkEnabled: Boolean,
     val toolsEnabled: Boolean,
+    val dynamicColor: Boolean,
 )

@@ -29,22 +29,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.trucdecomptable.ollamachat.R
-
-private const val LINK_TAG = "url"
 
 /**
  * Renders the markdown models emit. Falls back to plain text for anything the
@@ -124,21 +124,9 @@ private fun ListRow(item: MdListItem, style: TextStyle, color: Color) {
 
 @Composable
 private fun InlineText(spans: List<MdSpan>, style: TextStyle, color: Color) {
-    val uriHandler = LocalUriHandler.current
-    val text = annotate(spans, color)
-    if (spans.none { it.link != null }) {
-        Text(text = text, style = style, color = color)
-        return
-    }
-    androidx.compose.foundation.text.ClickableText(
-        text = text,
-        style = style.merge(TextStyle(color = color)),
-        onClick = { offset ->
-            text.getStringAnnotations(LINK_TAG, offset, offset).firstOrNull()?.let { annotation ->
-                runCatching { uriHandler.openUri(annotation.item) }
-            }
-        },
-    )
+    // Links are carried by the AnnotatedString itself, so a plain Text handles
+    // the taps — ClickableText is deprecated and swallowed accessibility.
+    Text(text = annotate(spans, color), style = style, color = color)
 }
 
 @Composable
@@ -159,9 +147,16 @@ private fun annotate(spans: List<MdSpan>, color: Color): AnnotatedString {
                     else -> null
                 },
             )
-            if (span.link != null) pushStringAnnotation(LINK_TAG, span.link)
-            withStyle(spanStyle) { append(span.text) }
-            if (span.link != null) pop()
+            if (span.link != null) {
+                withLink(
+                    LinkAnnotation.Url(
+                        url = span.link,
+                        styles = TextLinkStyles(style = spanStyle),
+                    )
+                ) { append(span.text) }
+            } else {
+                withStyle(spanStyle) { append(span.text) }
+            }
         }
     }
 }

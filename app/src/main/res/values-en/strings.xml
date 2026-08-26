@@ -217,6 +217,9 @@
     <string name="diagnostics_subject">OllamaChat log</string>
     <string name="diagnostics_cleared">Log cleared</string>
 
+    <string name="settings_dynamic_color">Wallpaper colours</string>
+    <string name="settings_dynamic_color_help">Matches the app to your wallpaper colours (Android 12 and later).</string>
+
     <!-- Notifications -->
     <string name="notification_channel_generation">Generation in progress</string>
     <string name="notification_channel_updates">Updates</string>

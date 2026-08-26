@@ -35,6 +35,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -66,6 +67,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.trucdecomptable.ollamachat.OllamaChatApp
 import com.trucdecomptable.ollamachat.R
 import com.trucdecomptable.ollamachat.data.backup.BackupCrypto
+import com.trucdecomptable.ollamachat.ui.theme.dynamicColorAvailable
 import com.trucdecomptable.ollamachat.ui.chat.resolve
 import com.trucdecomptable.ollamachat.util.DiagnosticLog
 import com.trucdecomptable.ollamachat.util.PinUtils
@@ -321,6 +323,14 @@ fun SettingsScreen(
             HorizontalDivider()
             SectionTitle(stringResource(R.string.settings_section_appearance))
             ThemeDropdown(selected = state.theme, onSelect = vm::onThemeChange)
+            if (dynamicColorAvailable()) {
+                SwitchRow(
+                    label = stringResource(R.string.settings_dynamic_color),
+                    checked = state.dynamicColor,
+                    onChange = vm::onDynamicColorChange,
+                )
+                Hint(stringResource(R.string.settings_dynamic_color_help))
+            }
 
             HorizontalDivider()
             SectionTitle(stringResource(R.string.settings_section_security))
@@ -569,7 +579,9 @@ private fun ModelDropdown(
             readOnly = true,
             label = { Text(stringResource(R.string.settings_model)) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth(),
+            modifier = Modifier
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                .fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             models.forEach { m ->
@@ -647,7 +659,9 @@ private fun ThemeDropdown(selected: String, onSelect: (String) -> Unit) {
             readOnly = true,
             label = { Text(stringResource(R.string.settings_theme)) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth(),
+            modifier = Modifier
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                .fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { (key, label) ->
