@@ -1,6 +1,7 @@
 package com.trucdecomptable.ollamachat.data.repo
 
 import com.trucdecomptable.ollamachat.data.db.Message
+import com.trucdecomptable.ollamachat.data.db.images
 
 /**
  * Decides when a conversation no longer fits the model's context window.
@@ -25,7 +26,7 @@ object ContextBudget {
         var total = systemPrompt.length / 4
         messages.forEach { m ->
             total += m.content.length / 4
-            if (m.imagePath != null || m.imageBase64 != null) total += 1000
+            total += 1000 * (m.images.size + if (m.imageBase64 != null) 1 else 0)
         }
         return total
     }

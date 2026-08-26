@@ -1,16 +1,22 @@
 package com.trucdecomptable.ollamachat.ui.settings
 
+import android.content.Context
+import android.net.Uri
 import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.trucdecomptable.ollamachat.AppContainer
 import com.trucdecomptable.ollamachat.R
+import com.trucdecomptable.ollamachat.data.backup.BackupArchive
+import com.trucdecomptable.ollamachat.data.backup.BackupCrypto
+import com.trucdecomptable.ollamachat.data.mcp.McpClient
 import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
 import com.trucdecomptable.ollamachat.data.ollama.NetworkScanner
 import com.trucdecomptable.ollamachat.data.prefs.McpServer
 import com.trucdecomptable.ollamachat.util.PinUtils
 import com.trucdecomptable.ollamachat.ui.chat.UiMessage
+import com.trucdecomptable.ollamachat.ui.chat.uiMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -40,6 +46,7 @@ data class SettingsUiState(
     val mcpServers: List<McpServer> = emptyList(),
     val thinkEnabled: Boolean = false,
     val toolsEnabled: Boolean = true,
+    val dynamicColor: Boolean = false,
     val models: List<ModelInfo> = emptyList(),
     val testing: Boolean = false,
     val testResult: String? = null,
@@ -47,6 +54,10 @@ data class SettingsUiState(
     val pinMessage: UiMessage? = null,
     val scanning: Boolean = false,
     val scanResults: List<NetworkScanner.ScanResult> = emptyList(),
+    val backupBusy: Boolean = false,
+    val backupMessage: UiMessage? = null,
+    val pullingModel: String? = null,
+    val pullProgress: Float = 0f,
 )
 
 /** Transient (non-persisted) UI state merged into the settings snapshot. */
@@ -58,6 +69,10 @@ private data class Transient(
     val pinMessage: UiMessage? = null,
     val scanning: Boolean = false,
     val scanResults: List<NetworkScanner.ScanResult> = emptyList(),
+    val backupBusy: Boolean = false,
+    val backupMessage: UiMessage? = null,
+    val pullingModel: String? = null,
+    val pullProgress: Float = 0f,
 )
 
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
@@ -89,6 +104,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             mcpServers = snap.mcpServers,
             thinkEnabled = snap.thinkEnabled,
             toolsEnabled = snap.toolsEnabled,
+            dynamicColor = snap.dynamicColor,
             models = tr.models,
             testing = tr.testing,
             testResult = tr.testResult,
@@ -96,6 +112,10 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             pinMessage = tr.pinMessage,
             scanning = tr.scanning,
             scanResults = tr.scanResults,
+            backupBusy = tr.backupBusy,
+            backupMessage = tr.backupMessage,
+            pullingModel = tr.pullingModel,
+            pullProgress = tr.pullProgress,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
 
@@ -125,6 +145,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun onContextCompactEnabledChange(v: Boolean) = launchSetting { settings.setContextCompactEnabled(v) }
     fun onThinkEnabledChange(v: Boolean) = launchSetting { settings.setThinkEnabled(v) }
     fun onToolsEnabledChange(v: Boolean) = launchSetting { settings.setToolsEnabled(v) }
+    fun onDynamicColorChange(v: Boolean) = launchSetting { settings.setDynamicColor(v) }
     fun onFirstLaunchDone() = launchSetting { settings.setFirstLaunchDone(true) }
 
     /** Turning the lock on without a code would leave the app effectively open. */
@@ -144,12 +165,16 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         if (n.isEmpty() || u.isEmpty()) return
         viewModelScope.launch {
             settings.setMcpServers(settings.mcpServers.first() + McpServer(n, u))
+            // Sessions and tool lists are cached per server: a changed list
+            // must not keep answering from the old one.
+            McpClient.invalidate()
         }
     }
 
     fun removeMcpServer(server: McpServer) {
         viewModelScope.launch {
             settings.setMcpServers(settings.mcpServers.first().filter { it != server })
+            McpClient.invalidate(server.url)
         }
     }
 
@@ -241,6 +266,89 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun consumePinMessage() = transient.update { it.copy(pinMessage = null) }
+
+    // --- encrypted export / import ---
+
+    fun exportBackup(context: Context, uri: Uri, passphrase: String) {
+        if (transient.value.backupBusy) return
+        viewModelScope.launch {
+            transient.update { it.copy(backupBusy = true, backupMessage = UiMessage(R.string.backup_working)) }
+            val message = try {
+                val bytes = container.backupManager.export(passphrase.toCharArray())
+                context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    ?: error("flux indisponible")
+                UiMessage(R.string.backup_exported)
+            } catch (e: Exception) {
+                uiMessage(R.string.backup_export_failed, e.message)
+            }
+            transient.update { it.copy(backupBusy = false, backupMessage = message) }
+        }
+    }
+
+    fun importBackup(context: Context, uri: Uri, passphrase: String) {
+        if (transient.value.backupBusy) return
+        viewModelScope.launch {
+            transient.update { it.copy(backupBusy = true, backupMessage = UiMessage(R.string.backup_working)) }
+            val message = try {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: error("fichier illisible")
+                val result = container.backupManager.import(bytes, passphrase.toCharArray())
+                uiMessage(R.string.backup_imported, result.conversations, result.messages)
+            } catch (e: BackupCrypto.WrongPassphraseException) {
+                uiMessage(R.string.backup_import_failed, e.message)
+            } catch (e: BackupCrypto.NotABackupException) {
+                uiMessage(R.string.backup_import_failed, e.message)
+            } catch (e: BackupArchive.UnsupportedVersionException) {
+                uiMessage(R.string.backup_import_failed, e.message)
+            } catch (e: Exception) {
+                uiMessage(R.string.backup_import_failed, e.message)
+            }
+            transient.update { it.copy(backupBusy = false, backupMessage = message) }
+        }
+    }
+
+    fun consumeBackupMessage() = transient.update { it.copy(backupMessage = null) }
+
+    // --- server-side model management ---
+
+    fun pullModel(name: String) {
+        val model = name.trim()
+        if (model.isEmpty() || transient.value.pullingModel != null) return
+        viewModelScope.launch {
+            val url = settings.baseUrl.first()
+            transient.update { it.copy(pullingModel = model, pullProgress = 0f, backupMessage = null) }
+            val result = container.ollamaClient.pullModel(url, model) { progress ->
+                transient.update { it.copy(pullProgress = progress.fraction) }
+            }
+            transient.update {
+                it.copy(
+                    pullingModel = null,
+                    pullProgress = 0f,
+                    backupMessage = if (result.isSuccess) uiMessage(R.string.models_pulled, model)
+                    else uiMessage(R.string.models_pull_failed, result.exceptionOrNull()?.message),
+                )
+            }
+            if (result.isSuccess) refreshModels()
+        }
+    }
+
+    fun deleteModel(name: String) {
+        viewModelScope.launch {
+            val url = settings.baseUrl.first()
+            val result = container.ollamaClient.deleteModel(url, name)
+            transient.update {
+                it.copy(
+                    backupMessage = if (result.isSuccess) uiMessage(R.string.models_deleted, name)
+                    else uiMessage(R.string.models_delete_failed, result.exceptionOrNull()?.message),
+                )
+            }
+            if (result.isSuccess) {
+                // A deleted model must not stay selected.
+                if (settings.model.first() == name) settings.setModel("")
+                refreshModels()
+            }
+        }
+    }
 
     private fun pinMessage(@StringRes resId: Int) =
         transient.update { it.copy(pinMessage = UiMessage(resId)) }

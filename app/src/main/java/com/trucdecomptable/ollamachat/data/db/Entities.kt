@@ -44,8 +44,14 @@ data class Message(
      * SQLite's 2 MB CursorWindow and makes reading the conversation throw.
      */
     val imageBase64: String? = null,
-    /** Absolute path of the image file on app-private storage (v1.3+). */
-    val imagePath: String? = null,
+    /**
+     * Absolute paths of the attached images, one per line.
+     *
+     * The column keeps its v1.3 name so no migration is needed: a single path
+     * is simply a one-line list, and file paths never contain a newline.
+     */
+    @ColumnInfo(name = "imagePath")
+    val imagePaths: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val stats: String? = null,        // e.g. "42 tok/s · 850 tokens" (assistant messages)
     /** Model reasoning emitted before the answer, when the model exposes it. */
@@ -59,6 +65,14 @@ data class Message(
     @ColumnInfo(defaultValue = "0")
     val excludedFromContext: Boolean = false,
 )
+
+/** The attached images as a list; empty when the message has none. */
+val Message.images: List<String>
+    get() = imagePaths?.lineSequence()?.filter { it.isNotBlank() }?.toList().orEmpty()
+
+/** Joins image paths for storage. */
+fun imagePathsOf(paths: List<String>): String? =
+    paths.filter { it.isNotBlank() }.takeIf { it.isNotEmpty() }?.joinToString("\n")
 
 /** Long-term memory injected into the system prompt of every conversation. */
 @Entity(tableName = "memories")

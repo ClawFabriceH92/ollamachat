@@ -35,6 +35,9 @@ interface ConversationDao {
     )
     fun observeSummaries(archived: Boolean, query: String): Flow<List<ConversationSummary>>
 
+    @Query("SELECT * FROM conversations ORDER BY createdAt ASC, id ASC")
+    suspend fun listAll(): List<Conversation>
+
     @Query("SELECT * FROM conversations WHERE id = :id")
     fun observeById(id: Long): Flow<Conversation?>
 
@@ -67,6 +70,23 @@ interface MessageDao {
     // otherwise come back in arbitrary order — id breaks the tie.
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC, id ASC")
     fun observeForConversation(conversationId: Long): Flow<List<Message>>
+
+    /**
+     * The last [limit] messages, oldest first. Opening a conversation should
+     * not mean loading years of history before the first frame.
+     */
+    @Query(
+        """
+        SELECT * FROM (
+            SELECT * FROM messages WHERE conversationId = :conversationId
+            ORDER BY createdAt DESC, id DESC LIMIT :limit
+        ) ORDER BY createdAt ASC, id ASC
+        """
+    )
+    fun observeRecent(conversationId: Long, limit: Int): Flow<List<Message>>
+
+    @Query("SELECT COUNT(*) FROM messages WHERE conversationId = :conversationId")
+    fun observeCount(conversationId: Long): Flow<Int>
 
     @Query("SELECT * FROM messages WHERE conversationId = :conversationId ORDER BY createdAt ASC, id ASC")
     suspend fun listForConversation(conversationId: Long): List<Message>
@@ -115,8 +135,7 @@ interface MessageDao {
     @Query("SELECT imagePath FROM messages WHERE conversationId = :conversationId AND imagePath IS NOT NULL")
     suspend fun imagePathsFor(conversationId: Long): List<String?>
 
-    @Query("SELECT imagePath FROM messages WHERE imagePath IS NOT NULL")
-    suspend fun allImagePaths(): List<String?>
+
 }
 
 @Dao
@@ -126,6 +145,9 @@ interface MemoryDao {
 
     @Query("SELECT * FROM memories ORDER BY updatedAt DESC LIMIT :limit")
     suspend fun listRecent(limit: Int): List<Memory>
+
+    @Query("SELECT * FROM memories ORDER BY updatedAt DESC")
+    suspend fun listAll(): List<Memory>
 
     @Insert
     suspend fun insert(m: Memory): Long

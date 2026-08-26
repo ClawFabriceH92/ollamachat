@@ -5,6 +5,8 @@ import com.trucdecomptable.ollamachat.data.db.Conversation
 import com.trucdecomptable.ollamachat.data.db.ImageStore
 import com.trucdecomptable.ollamachat.data.db.Memory
 import com.trucdecomptable.ollamachat.data.db.Message
+import com.trucdecomptable.ollamachat.data.db.imagePathsOf
+import com.trucdecomptable.ollamachat.data.db.images
 import com.trucdecomptable.ollamachat.data.mcp.McpClient
 import com.trucdecomptable.ollamachat.data.ollama.ChatError
 import com.trucdecomptable.ollamachat.data.ollama.ChatErrorCode
@@ -17,6 +19,7 @@ import com.trucdecomptable.ollamachat.data.ollama.ToolDef
 import com.trucdecomptable.ollamachat.data.prefs.McpServer
 import com.trucdecomptable.ollamachat.data.prefs.SettingsRepository
 import com.trucdecomptable.ollamachat.data.tools.ToolExecutor
+import com.trucdecomptable.ollamachat.util.DiagnosticLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -39,7 +42,7 @@ class ChatRepository(
     private val db: AppDatabase,
     private val settings: SettingsRepository,
     private val client: OllamaClient,
-    private val images: ImageProvider = ImageProvider { ImageStore.readBase64(it) },
+    private val imageProvider: ImageProvider = ImageProvider { ImageStore.readBase64(it) },
 ) {
     /** Indirection so tests do not need Android's Base64. */
     fun interface ImageProvider {
@@ -55,6 +58,14 @@ class ChatRepository(
     @Volatile
     var isSending: Boolean = false
         private set
+
+    /** What one turn ended up producing. */
+    private data class TurnOutcome(
+        val text: String? = null,
+        val stats: String? = null,
+        val error: ChatError? = null,
+        val cancelled: Boolean = false,
+    )
 
     /** Capabilities are stable per (server, model) — asking once is enough. */
     private val capabilityCache = mutableMapOf<String, ModelCapabilities>()
@@ -93,24 +104,27 @@ class ChatRepository(
         if (isSending) return
         setSending(true)
         sendJob = scope.launch {
-            try {
+            val outcome = try {
                 db.messageDao().insert(
                     Message(
                         conversationId = conversationId,
                         role = "user",
                         content = content,
                         contentType = if (imagePaths.isNotEmpty()) "image" else "text",
-                        imagePath = imagePaths.firstOrNull(),
+                        imagePaths = imagePathsOf(imagePaths),
                     )
                 )
-                runTurn(conversationId, content, onDelta, onThinking, onResult)
+                runTurn(conversationId, content, onDelta, onThinking)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                onResult(null, null, ChatError(ChatErrorCode.UNKNOWN, e.message), false)
+                TurnOutcome(error = ChatError(ChatErrorCode.UNKNOWN, e.message))
             } finally {
+                // Released before the caller is told the turn ended: otherwise
+                // a send issued straight from the callback is refused as busy.
                 setSending(false)
             }
+            outcome.report(onResult)
         }
     }
 
@@ -127,19 +141,20 @@ class ChatRepository(
         if (isSending) return
         setSending(true)
         sendJob = scope.launch {
-            try {
+            val outcome = try {
                 val last = db.messageDao().lastAssistant(conversationId)
                 if (last != null) db.messageDao().deleteFrom(conversationId, last.id)
                 val prompt = db.messageDao().listForContext(conversationId)
                     .lastOrNull { it.role == "user" }?.content.orEmpty()
-                runTurn(conversationId, prompt, onDelta, onThinking, onResult)
+                runTurn(conversationId, prompt, onDelta, onThinking)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                onResult(null, null, ChatError(ChatErrorCode.UNKNOWN, e.message), false)
+                TurnOutcome(error = ChatError(ChatErrorCode.UNKNOWN, e.message))
             } finally {
                 setSending(false)
             }
+            outcome.report(onResult)
         }
     }
 
@@ -155,7 +170,7 @@ class ChatRepository(
         if (isSending) return
         setSending(true)
         sendJob = scope.launch {
-            try {
+            val outcome = try {
                 val original = db.messageDao().getById(messageId)
                 db.messageDao().deleteFrom(conversationId, messageId)
                 db.messageDao().insert(
@@ -164,17 +179,18 @@ class ChatRepository(
                         role = "user",
                         content = newContent,
                         contentType = original?.contentType ?: "text",
-                        imagePath = original?.imagePath,
+                        imagePaths = original?.imagePaths,
                     )
                 )
-                runTurn(conversationId, newContent, onDelta, onThinking, onResult)
+                runTurn(conversationId, newContent, onDelta, onThinking)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                onResult(null, null, ChatError(ChatErrorCode.UNKNOWN, e.message), false)
+                TurnOutcome(error = ChatError(ChatErrorCode.UNKNOWN, e.message))
             } finally {
                 setSending(false)
             }
+            outcome.report(onResult)
         }
     }
 
@@ -184,20 +200,13 @@ class ChatRepository(
         userContent: String,
         onDelta: (String) -> Unit,
         onThinking: (String) -> Unit,
-        onResult: (finalText: String?, statsLine: String?, error: ChatError?, cancelled: Boolean) -> Unit,
-    ) {
+    ): TurnOutcome {
         val conv = db.conversationDao().getById(conversationId)
-        if (conv == null) {
-            onResult(null, null, ChatError(ChatErrorCode.NO_CONVERSATION), false)
-            return
-        }
+        if (conv == null) return TurnOutcome(error = ChatError(ChatErrorCode.NO_CONVERSATION))
 
         val systemPrompt = conv.systemPrompt ?: settings.defaultSystemPrompt.first()
         val model = conv.model ?: settings.model.first()
-        if (model.isBlank()) {
-            onResult(null, null, ChatError(ChatErrorCode.NO_MODEL), false)
-            return
-        }
+        if (model.isBlank()) return TurnOutcome(error = ChatError(ChatErrorCode.NO_MODEL))
         val baseUrl = settings.baseUrl.first()
         val braveKey = settings.braveApiKey.first()
 
@@ -248,13 +257,15 @@ class ChatRepository(
             if (round.error != null) {
                 // Keep whatever was streamed before the failure.
                 persistAssistant(conversationId, round, userContent)
-                onResult(round.fullText.ifBlank { null }, null, round.error, false)
-                return
+                return TurnOutcome(text = round.fullText.ifBlank { null }, error = round.error)
             }
             if (round.cancelled) {
                 persistAssistant(conversationId, round, userContent)
-                onResult(round.fullText.ifBlank { null }, round.statsLine(), null, true)
-                return
+                return TurnOutcome(
+                    text = round.fullText.ifBlank { null },
+                    stats = round.statsLine(),
+                    cancelled = true,
+                )
             }
             if (round.toolCalls.isEmpty()) break
 
@@ -299,13 +310,14 @@ class ChatRepository(
 
         // 4. Persist the final assistant answer with stats.
         val final = result ?: ChatStreamResult("")
-        if (final.fullText.isBlank()) {
-            onResult(null, null, ChatError(ChatErrorCode.EMPTY), false)
-            return
-        }
+        if (final.fullText.isBlank()) return TurnOutcome(error = ChatError(ChatErrorCode.EMPTY))
         persistAssistant(conversationId, final, userContent)
-        onResult(final.fullText, final.statsLine(), null, false)
+        return TurnOutcome(text = final.fullText, stats = final.statsLine())
     }
+
+    private fun TurnOutcome.report(
+        onResult: (finalText: String?, statsLine: String?, error: ChatError?, cancelled: Boolean) -> Unit,
+    ) = onResult(text, stats, error, cancelled)
 
     private suspend fun persistAssistant(
         conversationId: Long,
@@ -390,13 +402,14 @@ class ChatRepository(
     }
 
     private fun Message.toChatMessage(): OllamaChatMessage {
-        val base64 = images.base64(imagePath) ?: imageBase64
+        val encoded = this.images.mapNotNull { imageProvider.base64(it) }
+            .ifEmpty { listOfNotNull(imageBase64) }
         return OllamaChatMessage(
             // Tool traces are excluded from context, so anything left that is
             // not user/assistant is context injected by the app.
             role = if (role == "tool") "system" else role,
             content = content,
-            images = if (base64 != null) listOf(base64) else emptyList(),
+            images = encoded,
         )
     }
 
@@ -425,8 +438,9 @@ class ChatRepository(
                         )
                     )
                 }
-            } catch (_: Exception) {
-                // Unreachable MCP server: skip silently.
+            } catch (e: Exception) {
+                // Unreachable MCP server: the model just gets fewer tools.
+                DiagnosticLog.record("mcp/${server.name}", e)
             }
         }
         return tools
@@ -475,8 +489,9 @@ class ChatRepository(
                     content = "Contexte compacté automatiquement (résumé des messages précédents) :\n$summary",
                 )
             )
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // Compaction must never block the send.
+            DiagnosticLog.record("compaction", e)
         }
     }
 
@@ -494,13 +509,19 @@ class ChatRepository(
         db.conversationDao().insert(Conversation(title = "", systemPrompt = systemPrompt, model = model))
 
     /** Removes a conversation and the image files its messages referenced. */
+    private suspend fun deleteImagesOf(conversationId: Long) {
+        db.messageDao().imagePathsFor(conversationId)
+            .flatMap { it.orEmpty().lineSequence().filter(String::isNotBlank).toList() }
+            .forEach { ImageStore.delete(it) }
+    }
+
     suspend fun deleteConversation(conversationId: Long) {
-        db.messageDao().imagePathsFor(conversationId).forEach { ImageStore.delete(it) }
+        deleteImagesOf(conversationId)
         db.conversationDao().deleteById(conversationId)
     }
 
     suspend fun clearMessages(conversationId: Long) {
-        db.messageDao().imagePathsFor(conversationId).forEach { ImageStore.delete(it) }
+        deleteImagesOf(conversationId)
         db.messageDao().deleteForConversation(conversationId)
     }
 }

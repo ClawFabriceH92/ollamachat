@@ -10,6 +10,7 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
+import com.trucdecomptable.ollamachat.util.DiagnosticLog
 
 /**
  * Images live as files on app-private storage, never inside the database.
@@ -33,6 +34,15 @@ object ImageStore {
         val encoded = downscale(bytes)
         val file = File(dir(context), "${UUID.randomUUID()}.jpg")
         file.writeBytes(encoded)
+        file.absolutePath
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Stores [bytes] verbatim (already-processed images, e.g. from a backup). */
+    fun saveBytes(context: Context, bytes: ByteArray, extension: String = "jpg"): String? = try {
+        val file = File(dir(context), "${UUID.randomUUID()}.$extension")
+        file.writeBytes(bytes)
         file.absolutePath
     } catch (_: Exception) {
         null
@@ -112,8 +122,9 @@ object ImageStore {
                 db.query("SELECT id FROM messages WHERE imageBase64 IS NOT NULL AND imagePath IS NULL")
                     .use { cursor -> while (cursor.moveToNext()) ids.add(cursor.getLong(0)) }
                 ids.forEach { id -> migrateOne(context, db, id) }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 // Never let maintenance break app start.
+                DiagnosticLog.record("images/migration", e)
             }
         }
 

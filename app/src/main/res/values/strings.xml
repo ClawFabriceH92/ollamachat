@@ -194,6 +194,47 @@
     <string name="welcome_no_models">Aucun modèle installé sur le serveur — installes-en un, puis réessaie.</string>
     <string name="welcome_retest">Re-tester la connexion</string>
 
+    <!-- Sauvegarde -->
+    <string name="settings_section_data">Données</string>
+    <string name="settings_export">Exporter mes données…</string>
+    <string name="settings_import">Importer une sauvegarde…</string>
+    <string name="settings_backup_help">La sauvegarde système est désactivée pour protéger tes conversations. Cet export chiffré est le seul moyen de les transférer sur un autre téléphone. Garde la phrase de passe : sans elle, le fichier est irrécupérable.</string>
+    <string name="backup_export_title">Exporter mes données</string>
+    <string name="backup_import_title">Importer une sauvegarde</string>
+    <string name="backup_passphrase">Phrase de passe</string>
+    <string name="backup_passphrase_confirm">Confirmer la phrase de passe</string>
+    <string name="backup_passphrase_too_short">Au moins %1$d caractères</string>
+    <string name="backup_passphrase_mismatch">Les deux phrases de passe ne correspondent pas</string>
+    <string name="backup_working">Opération en cours…</string>
+    <string name="backup_exported">Sauvegarde exportée</string>
+    <string name="backup_export_failed">Échec de l’export : %1$s</string>
+    <string name="backup_imported">%1$d conversation(s) et %2$d message(s) importés</string>
+    <string name="backup_import_failed">Échec de l’import : %1$s</string>
+    <string name="backup_import_note">L’import ajoute les conversations aux tiennes, il n’efface jamais rien.</string>
+
+    <string name="chat_load_older">Charger les messages précédents</string>
+    <string name="settings_diagnostics">Partager le journal de diagnostic</string>
+    <string name="settings_diagnostics_clear">Vider le journal</string>
+    <string name="settings_diagnostics_help">Les dernières erreurs réseau, outils et base de données. Aucun contenu de conversation n’y figure et rien n’est envoyé automatiquement.</string>
+    <string name="diagnostics_subject">Journal OllamaChat</string>
+    <string name="diagnostics_cleared">Journal vidé</string>
+
+    <string name="settings_dynamic_color">Couleurs du fond d’écran</string>
+    <string name="settings_dynamic_color_help">Accorde l’app aux couleurs de ton fond d’écran (Android 12 et plus).</string>
+
+    <string name="settings_manage_models">Gérer les modèles du serveur…</string>
+    <string name="models_dialog_title">Modèles du serveur</string>
+    <string name="models_pull_hint">Nom du modèle (ex. qwen3:8b)</string>
+    <string name="models_pull">Télécharger</string>
+    <string name="models_pulling">Téléchargement de %1$s…</string>
+    <string name="models_pulled">%1$s installé</string>
+    <string name="models_pull_failed">Échec du téléchargement : %1$s</string>
+    <string name="models_delete_title">Supprimer %1$s ?</string>
+    <string name="models_delete_body">Le modèle sera supprimé du serveur Ollama, pas seulement de l’application.</string>
+    <string name="models_deleted">%1$s supprimé</string>
+    <string name="models_delete_failed">Échec de la suppression : %1$s</string>
+    <string name="models_empty">Aucun modèle sur le serveur.</string>
+
     <!-- Notifications -->
     <string name="notification_channel_generation">Génération en cours</string>
     <string name="notification_channel_updates">Mises à jour</string>

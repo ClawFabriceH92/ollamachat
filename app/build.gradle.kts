@@ -30,8 +30,8 @@ android {
         applicationId = "com.trucdecomptable.ollamachat"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "1.3.1"
+        versionCode = 17
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -60,10 +60,12 @@ android {
 
     buildTypes {
         release {
-            // Left off deliberately: R8 output cannot be exercised on a device
-            // from this build setup, and a stripped PDFBox would only show up
-            // as a crash in the user's hands.
-            isMinifyEnabled = false
+            // R8 is not taken on faith either: CI installs this exact APK on
+            // the emulator and checks it starts, which exercises the riskiest
+            // stripped path (SQLCipher's JNI layer at database open). Every
+            // ABI stays in so the x86_64 emulator can run it.
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -109,6 +111,8 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric needs the merged resources to stand up a real Context.
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -149,6 +153,9 @@ dependencies {
     // --- Network ---
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // --- Encrypted database ---
+    implementation("net.zetetic:sqlcipher-android:4.9.0")
+
     // --- PDF text extraction ---
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
@@ -161,6 +168,10 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("org.json:json:20231013")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    // Room, SQLite and Context in plain JVM tests — no emulator needed.
+    testImplementation("org.robolectric:robolectric:4.16.1")
+    testImplementation("androidx.test:core:1.6.1")
+    testImplementation("androidx.room:room-testing:2.6.1")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

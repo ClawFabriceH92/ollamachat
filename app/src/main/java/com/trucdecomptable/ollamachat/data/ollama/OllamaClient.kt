@@ -18,9 +18,13 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import com.trucdecomptable.ollamachat.util.DiagnosticLog
 
 /**
  * Thin HTTP client for the Ollama REST API.
+ *
+ * Open so tests can stand in a scripted server: the orchestration in
+ * ChatRepository is the part worth covering, and it needs a seam here.
  *
  * Endpoints used:
  *  - GET  {base}/api/version         -> connectivity check
@@ -28,7 +32,7 @@ import java.util.concurrent.atomic.AtomicReference
  *  - POST {base}/api/chat            -> chat (streaming NDJSON, tools, stats)
  *  - POST {base}/api/show            -> model capabilities (vision, tools)
  */
-class OllamaClient(
+open class OllamaClient(
     private val http: OkHttpClient = defaultClient(),
     private val streamHttp: OkHttpClient = sharedStreamClient(),
 ) {
@@ -107,7 +111,7 @@ class OllamaClient(
     }
 
     /** Fetch model capabilities (vision / tool calling / reasoning) via /api/show. */
-    suspend fun modelCapabilities(baseUrl: String, model: String): Result<ModelCapabilities> =
+    open suspend fun modelCapabilities(baseUrl: String, model: String): Result<ModelCapabilities> =
         withContext(Dispatchers.IO) {
             try {
                 val body = JSONObject().put("model", model).toString()
@@ -124,8 +128,80 @@ class OllamaClient(
             }
         }
 
+    /** Progress of a model download, as Ollama reports it. */
+    data class PullProgress(val status: String, val completed: Long, val total: Long) {
+        val fraction: Float get() = if (total > 0) (completed.toFloat() / total).coerceIn(0f, 1f) else 0f
+    }
+
+    /**
+     * Downloads a model onto the server. Until now the only way to install one
+     * was to reach the machine itself, which the welcome screen cheerfully
+     * told the user to go and do.
+     */
+    open suspend fun pullModel(
+        baseUrl: String,
+        model: String,
+        onProgress: (PullProgress) -> Unit = {},
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val payload = JSONObject().put("model", model).put("stream", true)
+            val req = Request.Builder()
+                .url("${normalizeBaseUrl(baseUrl)}/api/pull")
+                .post(payload.toString().toRequestBody(JSON.toMediaType()))
+                .build()
+            streamHttp.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    return@withContext Result.failure(IOException("HTTP ${resp.code}"))
+                }
+                val source = resp.body?.source()
+                    ?: return@withContext Result.failure(IOException("Corps vide"))
+                while (isActive && !source.exhausted()) {
+                    val line = source.readUtf8Line() ?: break
+                    if (line.isBlank()) continue
+                    val json = try {
+                        JSONObject(line)
+                    } catch (_: Exception) {
+                        continue
+                    }
+                    val error = json.optString("error", "")
+                    if (error.isNotBlank()) return@withContext Result.failure(IOException(error))
+                    onProgress(
+                        PullProgress(
+                            status = json.optString("status", ""),
+                            completed = json.optLong("completed", 0L),
+                            total = json.optLong("total", 0L),
+                        )
+                    )
+                }
+                Result.success(Unit)
+            }
+        } catch (e: Exception) {
+            DiagnosticLog.record("ollama/pull", e)
+            Result.failure(e)
+        }
+    }
+
+    /** Removes a model from the server. */
+    open suspend fun deleteModel(baseUrl: String, model: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val payload = JSONObject().put("model", model).toString()
+                val req = Request.Builder()
+                    .url("${normalizeBaseUrl(baseUrl)}/api/delete")
+                    .delete(payload.toRequestBody(JSON.toMediaType()))
+                    .build()
+                http.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) Result.success(Unit)
+                    else Result.failure(IOException("HTTP ${resp.code}"))
+                }
+            } catch (e: Exception) {
+                DiagnosticLog.record("ollama/delete", e)
+                Result.failure(e)
+            }
+        }
+
     /** Stops the streaming call in flight; the partial answer is still returned. */
-    fun cancelActiveStream() {
+    open fun cancelActiveStream() {
         activeCall.getAndSet(null)?.cancel()
     }
 
@@ -137,7 +213,7 @@ class OllamaClient(
      * On [cancelActiveStream] the result carries `cancelled = true` together
      * with everything generated so far.
      */
-    suspend fun chatStream(
+    open suspend fun chatStream(
         baseUrl: String,
         model: String,
         messages: List<OllamaChatMessage>,
@@ -259,7 +335,7 @@ class OllamaClient(
      * Single non-streaming chat completion (used for context compaction).
      * Returns the full assistant text.
      */
-    suspend fun chatOnce(
+    open suspend fun chatOnce(
         baseUrl: String,
         model: String,
         messages: List<OllamaChatMessage>,
@@ -375,7 +451,12 @@ class OllamaClient(
         ModelCapabilities()
     }
 
-    private fun classify(e: Exception): ChatError = when (e) {
+    private fun classify(e: Exception): ChatError {
+        DiagnosticLog.record("ollama", e)
+        return classifyCode(e)
+    }
+
+    private fun classifyCode(e: Exception): ChatError = when (e) {
         is SocketTimeoutException -> ChatError(ChatErrorCode.TIMEOUT)
         is ConnectException, is UnknownHostException -> ChatError(ChatErrorCode.CONNECTION)
         else -> ChatError(ChatErrorCode.UNKNOWN, e.message)

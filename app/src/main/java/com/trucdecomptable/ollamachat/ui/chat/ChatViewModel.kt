@@ -11,6 +11,8 @@ import com.trucdecomptable.ollamachat.R
 import com.trucdecomptable.ollamachat.data.db.ImageStore
 import com.trucdecomptable.ollamachat.data.db.Memory
 import com.trucdecomptable.ollamachat.data.db.Message
+import com.trucdecomptable.ollamachat.data.db.imagePathsOf
+import com.trucdecomptable.ollamachat.data.db.images
 import com.trucdecomptable.ollamachat.data.ollama.ChatError
 import com.trucdecomptable.ollamachat.data.ollama.ModelCapabilities
 import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
@@ -20,14 +22,25 @@ import com.trucdecomptable.ollamachat.ui.documents.DocumentExtractor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /** A user-facing message identified by a string resource, localized at render time. */
-data class UiMessage(@StringRes val resId: Int, val arg: String? = null)
+data class UiMessage(@StringRes val resId: Int, val args: List<Any> = emptyList())
+
+/** Builds a [UiMessage]; null arguments become empty strings. */
+fun uiMessage(@StringRes resId: Int, vararg args: Any?): UiMessage =
+    UiMessage(resId, args.map { it ?: "" })
+
+/** Formats the message with the current locale. */
+fun UiMessage.resolve(context: Context): String =
+    if (args.isEmpty()) context.getString(resId)
+    else context.getString(resId, *args.toTypedArray())
 
 data class ChatUiState(
     val messages: List<Message> = emptyList(),
@@ -42,6 +55,7 @@ data class ChatUiState(
     val modelCapabilities: ModelCapabilities? = null,
     val error: ChatError? = null,
     val toast: UiMessage? = null,
+    val hasOlderMessages: Boolean = false,
 ) {
     val activeModel: String get() = conversationModel ?: defaultModel
 }
@@ -56,6 +70,7 @@ private data class Transient(
     val capabilities: ModelCapabilities? = null,
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ChatViewModel(
     private val conversationId: Long,
     private val container: AppContainer,
@@ -78,8 +93,13 @@ class ChatViewModel(
 
     private val conversation = db.conversationDao().observeById(conversationId)
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
-    private val messages = db.messageDao().observeForConversation(conversationId)
+    /** How many messages are currently observed; grows when the user scrolls back. */
+    private val windowSize = MutableStateFlow(INITIAL_WINDOW)
+    private val messages = windowSize
+        .flatMapLatest { size -> db.messageDao().observeRecent(conversationId, size) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    private val messageCount = db.messageDao().observeCount(conversationId)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
     private val defaultModel = settings.model
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
     private val convWithModel = combine(conversation, defaultModel) { c, m -> c to m }
@@ -90,7 +110,8 @@ class ChatViewModel(
         transient,
         repo.isSendingFlow,
         convWithModel,
-    ) { msgs, tr, sending, pair ->
+        messageCount,
+    ) { msgs, tr, sending, pair, total ->
         val (conv, defModel) = pair
         ChatUiState(
             messages = msgs,
@@ -105,8 +126,14 @@ class ChatViewModel(
             modelCapabilities = tr.capabilities,
             error = tr.error,
             toast = tr.toast,
+            hasOlderMessages = total > msgs.size,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ChatUiState())
+
+    /** Widens the observed window by one page. */
+    fun loadOlderMessages() {
+        windowSize.value += WINDOW_STEP
+    }
 
     val activeModel: String get() = uiState.value.activeModel
 
@@ -300,35 +327,54 @@ class ChatViewModel(
         }
     }
 
-    /** Extracts an imported document (text -> context message, image -> user message). */
-    fun importDocument(uri: Uri, mime: String, context: Context) {
+    /**
+     * Imports the picked files. Images are gathered into one message so the
+     * model sees them together; each text document becomes its own context
+     * message.
+     */
+    fun importDocuments(uris: List<Uri>, context: Context) {
+        if (uris.isEmpty()) return
         viewModelScope.launch {
-            val extracted = DocumentExtractor.extract(context, uri, mime)
-            if (extracted.imageBytes != null) {
-                val path = ImageStore.save(context, extracted.imageBytes)
-                if (path == null) {
-                    toast(R.string.toast_image_failed)
-                    return@launch
+            val imagePaths = mutableListOf<String>()
+            val labels = mutableListOf<String>()
+            var documents = 0
+
+            uris.forEach { uri ->
+                val mime = context.contentResolver.getType(uri) ?: "*/*"
+                val extracted = DocumentExtractor.extract(context, uri, mime)
+                if (extracted.imageBytes != null) {
+                    ImageStore.save(context, extracted.imageBytes)?.let { path ->
+                        imagePaths.add(path)
+                        labels.add(extracted.label)
+                    }
+                } else {
+                    db.messageDao().insert(
+                        Message(
+                            conversationId = conversationId,
+                            role = "system",
+                            content = "Document « ${extracted.label} » :\n${extracted.text.orEmpty()}",
+                        )
+                    )
+                    documents++
                 }
+            }
+
+            if (imagePaths.isNotEmpty()) {
                 db.messageDao().insert(
                     Message(
                         conversationId = conversationId,
                         role = "user",
-                        content = extracted.label,
+                        content = labels.joinToString(", "),
                         contentType = "image",
-                        imagePath = path,
+                        imagePaths = imagePathsOf(imagePaths),
                     )
                 )
-                toast(R.string.toast_image_added)
-            } else {
-                db.messageDao().insert(
-                    Message(
-                        conversationId = conversationId,
-                        role = "system",
-                        content = "Document « ${extracted.label} » :\n${extracted.text.orEmpty()}",
-                    )
-                )
-                toast(R.string.toast_document_imported)
+            }
+
+            when {
+                imagePaths.isNotEmpty() -> toast(R.string.toast_image_added)
+                documents > 0 -> toast(R.string.toast_document_imported)
+                else -> toast(R.string.toast_image_failed)
             }
         }
     }
@@ -372,7 +418,7 @@ class ChatViewModel(
 
     fun deleteMessage(message: Message) {
         viewModelScope.launch {
-            ImageStore.delete(message.imagePath)
+            message.images.forEach { ImageStore.delete(it) }
             db.messageDao().deleteById(message.id)
         }
     }
@@ -411,8 +457,8 @@ class ChatViewModel(
         }
     }
 
-    private fun toast(@StringRes resId: Int, arg: String? = null) {
-        transient.update { it.copy(toast = UiMessage(resId, arg)) }
+    private fun toast(@StringRes resId: Int, vararg args: Any?) {
+        transient.update { it.copy(toast = uiMessage(resId, *args)) }
     }
 
     override fun onCleared() {
@@ -423,6 +469,10 @@ class ChatViewModel(
     companion object {
         /** ~20 UI updates per second is smooth and keeps recomposition cheap. */
         private const val STREAM_UI_INTERVAL_MS = 50L
+
+        /** Enough to fill several screens; the rest loads on demand. */
+        internal const val INITIAL_WINDOW = 200
+        internal const val WINDOW_STEP = 200
     }
 
     class Factory(private val conversationId: Long, private val container: AppContainer) :

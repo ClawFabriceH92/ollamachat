@@ -74,7 +74,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -96,6 +95,7 @@ import com.trucdecomptable.ollamachat.OllamaChatApp
 import com.trucdecomptable.ollamachat.R
 import com.trucdecomptable.ollamachat.data.db.Memory
 import com.trucdecomptable.ollamachat.data.db.Message
+import com.trucdecomptable.ollamachat.data.db.images
 import com.trucdecomptable.ollamachat.data.ollama.ChatError
 import com.trucdecomptable.ollamachat.data.ollama.ChatErrorCode
 import com.trucdecomptable.ollamachat.ui.markdown.MarkdownText
@@ -134,16 +134,12 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
 
     val documentLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri != null) {
-            val mime = context.contentResolver.getType(uri) ?: "*/*"
-            vm.importDocument(uri, mime, context)
-        }
-    }
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris -> vm.importDocuments(uris, context) }
 
     val streamingVisible = state.streamingText.isNotBlank() || state.streamingThinking.isNotBlank()
-    val itemCount = state.messages.size + if (streamingVisible || state.isSending) 1 else 0
+    val headerCount = if (state.hasOlderMessages) 1 else 0
+    val itemCount = headerCount + state.messages.size + if (streamingVisible || state.isSending) 1 else 0
 
     // Only follow the stream while the user is already at the bottom, so
     // scrolling back through the conversation is not fought by every token.
@@ -157,9 +153,7 @@ fun ChatScreen(
 
     LaunchedEffect(state.toast) {
         state.toast?.let { message ->
-            val text = message.arg?.let { context.getString(message.resId, it) }
-                ?: context.getString(message.resId)
-            snackbarHostState.showSnackbar(text)
+            snackbarHostState.showSnackbar(message.resolve(context))
             vm.consumeToast()
         }
     }
@@ -306,6 +300,14 @@ fun ChatScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (state.hasOlderMessages) {
+                    item(key = "older") {
+                        TextButton(
+                            onClick = { vm.loadOlderMessages() },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(stringResource(R.string.chat_load_older)) }
+                    }
+                }
                 if (state.messages.isEmpty() && !state.isSending) {
                     item(key = "empty") {
                         Text(
@@ -570,7 +572,7 @@ private fun MessageBubble(message: Message, onLongPress: () -> Unit) {
                 .combinedClickable(onClick = {}, onLongClick = onLongPress)
                 .padding(12.dp),
         ) {
-            message.imagePath?.let { path -> MessageImage(path) }
+            if (message.images.isNotEmpty()) MessageImages(message.images)
 
             if (!message.thinking.isNullOrBlank()) {
                 ThinkingSection(message.thinking)
@@ -690,9 +692,21 @@ private fun ThinkingSection(thinking: String) {
 }
 
 @Composable
+private fun MessageImages(paths: List<String>) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        paths.forEach { path -> MessageImage(path) }
+    }
+}
+
+@Composable
 private fun MessageImage(path: String) {
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, path) {
-        value = withContext(Dispatchers.IO) {
+    // Decoded off the main thread, and re-decoded only when the path changes.
+    var bitmap by remember(path) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(path) {
+        bitmap = withContext(Dispatchers.IO) {
             try {
                 val file = File(path)
                 if (!file.exists()) null

@@ -1,5 +1,8 @@
 package com.trucdecomptable.ollamachat.ui.settings
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -29,18 +32,23 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +67,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.trucdecomptable.ollamachat.OllamaChatApp
 import com.trucdecomptable.ollamachat.R
+import com.trucdecomptable.ollamachat.data.backup.BackupCrypto
+import com.trucdecomptable.ollamachat.ui.theme.dynamicColorAvailable
+import com.trucdecomptable.ollamachat.ui.chat.resolve
+import com.trucdecomptable.ollamachat.util.DiagnosticLog
 import com.trucdecomptable.ollamachat.util.PinUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,9 +82,33 @@ fun SettingsScreen(
     val state by vm.uiState.collectAsState()
     var showPinDialog by remember { mutableStateOf(false) }
     var showMcpDialog by remember { mutableStateOf(false) }
+    var showModelsDialog by remember { mutableStateOf(false) }
     var showKey by rememberSaveable { mutableStateOf(false) }
+    var exportUri by remember { mutableStateOf<Uri?>(null) }
+    var importUri by remember { mutableStateOf<Uri?>(null) }
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // The file is chosen first, the passphrase asked second: cancelling the
+    // picker then leaves nothing half-entered behind.
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri -> exportUri = uri }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> importUri = uri }
+
+    LaunchedEffect(state.backupMessage) {
+        state.backupMessage?.let { message ->
+            if (!state.backupBusy) {
+                snackbarHostState.showSnackbar(message.resolve(context))
+                vm.consumeBackupMessage()
+            }
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.settings_title)) },
@@ -174,6 +210,9 @@ fun SettingsScreen(
                 onSelect = vm::onModelChange,
                 onRefresh = { vm.refreshModels() },
             )
+            TextButton(onClick = { showModelsDialog = true }) {
+                Text(stringResource(R.string.settings_manage_models))
+            }
 
             HorizontalDivider()
             SectionTitle(stringResource(R.string.settings_section_web))
@@ -289,6 +328,14 @@ fun SettingsScreen(
             HorizontalDivider()
             SectionTitle(stringResource(R.string.settings_section_appearance))
             ThemeDropdown(selected = state.theme, onSelect = vm::onThemeChange)
+            if (dynamicColorAvailable()) {
+                SwitchRow(
+                    label = stringResource(R.string.settings_dynamic_color),
+                    checked = state.dynamicColor,
+                    onChange = vm::onDynamicColorChange,
+                )
+                Hint(stringResource(R.string.settings_dynamic_color_help))
+            }
 
             HorizontalDivider()
             SectionTitle(stringResource(R.string.settings_section_security))
@@ -314,6 +361,35 @@ fun SettingsScreen(
             if (!state.hasPin) Hint(stringResource(R.string.settings_lock_needs_pin))
             Hint(stringResource(R.string.settings_security_help))
 
+            HorizontalDivider()
+            SectionTitle(stringResource(R.string.settings_section_data))
+            OutlinedButton(
+                onClick = { exportLauncher.launch("ollamachat-sauvegarde.ocb") },
+                enabled = !state.backupBusy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(stringResource(R.string.settings_export)) }
+            OutlinedButton(
+                onClick = { importLauncher.launch(arrayOf("*/*")) },
+                enabled = !state.backupBusy,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(stringResource(R.string.settings_import)) }
+            if (state.backupBusy) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.backup_working), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Hint(stringResource(R.string.settings_backup_help))
+
+            TextButton(onClick = { shareDiagnostics(context) }) {
+                Text(stringResource(R.string.settings_diagnostics))
+            }
+            TextButton(onClick = { DiagnosticLog.clear() }) {
+                Text(stringResource(R.string.settings_diagnostics_clear))
+            }
+            Hint(stringResource(R.string.settings_diagnostics_help))
+
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -327,6 +403,43 @@ fun SettingsScreen(
                 vm.consumePinMessage()
             },
             onConfirm = { old, new, confirm -> vm.changePin(old, new, confirm) },
+        )
+    }
+
+    exportUri?.let { uri ->
+        PassphraseDialog(
+            title = stringResource(R.string.backup_export_title),
+            confirmPassphrase = true,
+            note = stringResource(R.string.settings_backup_help),
+            onDismiss = { exportUri = null },
+            onConfirm = { passphrase ->
+                vm.exportBackup(context, uri, passphrase)
+                exportUri = null
+            },
+        )
+    }
+
+    importUri?.let { uri ->
+        PassphraseDialog(
+            title = stringResource(R.string.backup_import_title),
+            confirmPassphrase = false,
+            note = stringResource(R.string.backup_import_note),
+            onDismiss = { importUri = null },
+            onConfirm = { passphrase ->
+                vm.importBackup(context, uri, passphrase)
+                importUri = null
+            },
+        )
+    }
+
+    if (showModelsDialog) {
+        ModelManagerDialog(
+            models = state.models,
+            pullingModel = state.pullingModel,
+            pullProgress = state.pullProgress,
+            onPull = vm::pullModel,
+            onDelete = vm::deleteModel,
+            onDismiss = { showModelsDialog = false },
         )
     }
 
@@ -376,6 +489,169 @@ private fun McpServerDialog(onDismiss: () -> Unit, onAdd: (name: String, url: St
 }
 
 @Composable
+private fun ModelManagerDialog(
+    models: List<com.trucdecomptable.ollamachat.data.ollama.ModelInfo>,
+    pullingModel: String?,
+    pullProgress: Float,
+    onPull: (String) -> Unit,
+    onDelete: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var wanted by rememberSaveable { mutableStateOf("") }
+    var confirmDelete by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.models_dialog_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (models.isEmpty()) {
+                    Text(stringResource(R.string.models_empty), style = MaterialTheme.typography.bodyMedium)
+                }
+                models.forEach { model ->
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(model.name, style = MaterialTheme.typography.bodyMedium)
+                            if (model.sizeBytes > 0) {
+                                Text(
+                                    text = "%.1f Go".format(model.sizeBytes / 1_000_000_000.0),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        IconButton(onClick = { confirmDelete = model.name }) {
+                            Icon(
+                                Icons.Filled.Delete,
+                                contentDescription = stringResource(R.string.action_delete),
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
+                HorizontalDivider()
+                OutlinedTextField(
+                    value = wanted,
+                    onValueChange = { wanted = it },
+                    label = { Text(stringResource(R.string.models_pull_hint)) },
+                    singleLine = true,
+                    enabled = pullingModel == null,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (pullingModel != null) {
+                    Text(
+                        stringResource(R.string.models_pulling, pullingModel),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    LinearProgressIndicator(
+                        progress = { pullProgress },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onPull(wanted); wanted = "" },
+                enabled = wanted.isNotBlank() && pullingModel == null,
+            ) { Text(stringResource(R.string.models_pull)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) }
+        },
+    )
+
+    confirmDelete?.let { name ->
+        AlertDialog(
+            onDismissRequest = { confirmDelete = null },
+            title = { Text(stringResource(R.string.models_delete_title, name)) },
+            text = { Text(stringResource(R.string.models_delete_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDelete(name)
+                    confirmDelete = null
+                }) { Text(stringResource(R.string.action_delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = null }) { Text(stringResource(R.string.action_cancel)) }
+            },
+        )
+    }
+}
+
+@Composable
+private fun PassphraseDialog(
+    title: String,
+    confirmPassphrase: Boolean,
+    note: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var passphrase by rememberSaveable { mutableStateOf("") }
+    var confirmation by rememberSaveable { mutableStateOf("") }
+    var visible by rememberSaveable { mutableStateOf(false) }
+
+    val tooShort = passphrase.length < BackupCrypto.MIN_PASSPHRASE
+    val mismatch = confirmPassphrase && confirmation != passphrase
+    val error = when {
+        passphrase.isEmpty() -> null
+        tooShort -> stringResource(R.string.backup_passphrase_too_short, BackupCrypto.MIN_PASSPHRASE)
+        mismatch && confirmation.isNotEmpty() -> stringResource(R.string.backup_passphrase_mismatch)
+        else -> null
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = passphrase,
+                    onValueChange = { passphrase = it },
+                    label = { Text(stringResource(R.string.backup_passphrase)) },
+                    singleLine = true,
+                    visualTransformation = if (visible) VisualTransformation.None
+                    else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { visible = !visible }) {
+                            Icon(
+                                if (visible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                contentDescription = stringResource(
+                                    if (visible) R.string.settings_hide_key else R.string.settings_show_key
+                                ),
+                            )
+                        }
+                    },
+                )
+                if (confirmPassphrase) {
+                    OutlinedTextField(
+                        value = confirmation,
+                        onValueChange = { confirmation = it },
+                        label = { Text(stringResource(R.string.backup_passphrase_confirm)) },
+                        singleLine = true,
+                        visualTransformation = if (visible) VisualTransformation.None
+                        else PasswordVisualTransformation(),
+                    )
+                }
+                error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                Hint(note)
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(passphrase) },
+                enabled = !tooShort && !mismatch,
+            ) { Text(stringResource(R.string.action_ok)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        },
+    )
+}
+
+@Composable
 private fun SectionTitle(text: String) {
     Text(
         text = text,
@@ -410,7 +686,9 @@ private fun ModelDropdown(
             readOnly = true,
             label = { Text(stringResource(R.string.settings_model)) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth(),
+            modifier = Modifier
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                .fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             models.forEach { m ->
@@ -488,7 +766,9 @@ private fun ThemeDropdown(selected: String, onSelect: (String) -> Unit) {
             readOnly = true,
             label = { Text(stringResource(R.string.settings_theme)) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth(),
+            modifier = Modifier
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                .fillMaxWidth(),
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { (key, label) ->
@@ -562,6 +842,20 @@ private fun PinChangeDialog(
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) }
         },
     )
+}
+
+/** Shares the diagnostic log as plain text; nothing leaves the device otherwise. */
+private fun shareDiagnostics(context: android.content.Context) {
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_SUBJECT, context.getString(R.string.diagnostics_subject))
+        putExtra(android.content.Intent.EXTRA_TEXT, DiagnosticLog.formatted())
+    }
+    runCatching {
+        context.startActivity(
+            android.content.Intent.createChooser(intent, context.getString(R.string.settings_diagnostics))
+        )
+    }
 }
 
 @Composable

@@ -1,6 +1,7 @@
 package com.trucdecomptable.ollamachat
 
 import android.app.Application
+import com.trucdecomptable.ollamachat.data.backup.BackupManager
 import com.trucdecomptable.ollamachat.data.db.AppDatabase
 import com.trucdecomptable.ollamachat.data.db.ImageStore
 import com.trucdecomptable.ollamachat.data.ollama.OllamaClient
@@ -43,4 +44,5 @@ class AppContainer(app: Application) {
     val settings: SettingsRepository = SettingsRepository(app)
     val ollamaClient: OllamaClient = OllamaClient()
     val chatRepository: ChatRepository = ChatRepository(database, settings, ollamaClient)
+    val backupManager: BackupManager = BackupManager(app, database, BuildConfig.VERSION_NAME)
 }
