@@ -75,5 +75,10 @@ jobs:
             gh release upload latest "$APK" --clobber && break
             sleep 10
           done
+          # A rolling release accumulates assets; leaving an older APK behind
+          # lets the in-app updater install a previous version.
+          gh release view latest --json assets -q '.assets[].name' \
+            | grep -vx 'app-release.apk' \
+            | while read -r stale; do gh release delete-asset latest "$stale" -y || true; done
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
