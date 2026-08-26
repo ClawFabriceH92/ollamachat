@@ -65,14 +65,34 @@ object UpdateManager {
     /** Manual check from the settings; ignores the skip and reports "up to date". */
     fun checkNow() = check(skippedVersion = "", manual = true)
 
+    /** Last check, so resuming the app does not hammer the GitHub API. */
+    @Volatile
+    private var lastCheckAt = 0L
+
+    private const val MIN_INTERVAL_MS = 60 * 60_000L
+
     private fun check(skippedVersion: String, manual: Boolean) {
         if (job?.isActive == true) return
+        val now = System.currentTimeMillis()
+        if (!manual && now - lastCheckAt < MIN_INTERVAL_MS) return
+        lastCheckAt = now
         job = scope.launch {
             val info = UpdateChecker.checkForUpdate()
+            // Recorded either way: "the update does not happen" has to be
+            // answerable from the diagnostic log instead of by guesswork.
             _state.value = when {
-                info == null -> if (manual) State.UpToDate(BuildConfig.VERSION_NAME) else State.Idle
-                info.version == skippedVersion -> State.Idle
-                else -> State.Available(info.version, info.notes, info.apkUrl)
+                info == null -> {
+                    DiagnosticLog.record("update", "aucune version plus récente que ${BuildConfig.VERSION_NAME}")
+                    if (manual) State.UpToDate(BuildConfig.VERSION_NAME) else State.Idle
+                }
+                info.version == skippedVersion -> {
+                    DiagnosticLog.record("update", "version ${info.version} écartée par l'utilisateur")
+                    State.Idle
+                }
+                else -> {
+                    DiagnosticLog.record("update", "version ${info.version} disponible")
+                    State.Available(info.version, info.notes, info.apkUrl)
+                }
             }
         }
     }

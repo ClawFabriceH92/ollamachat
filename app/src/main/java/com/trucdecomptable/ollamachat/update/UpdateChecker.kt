@@ -1,6 +1,7 @@
 package com.trucdecomptable.ollamachat.update
 
 import com.trucdecomptable.ollamachat.BuildConfig
+import com.trucdecomptable.ollamachat.util.DiagnosticLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -29,7 +30,10 @@ object UpdateChecker {
             conn.readTimeout = 10_000
             conn.setRequestProperty("Accept", "application/vnd.github+json")
             conn.setRequestProperty("User-Agent", "OllamaChat")
-            if (conn.responseCode != 200) return@withContext null
+            if (conn.responseCode != 200) {
+                DiagnosticLog.record("update/check", "HTTP ${conn.responseCode} depuis l'API GitHub")
+                return@withContext null
+            }
             val body = conn.inputStream.bufferedReader().readText()
             val releases = org.json.JSONArray(body)
             for (i in 0 until releases.length()) {
@@ -52,7 +56,9 @@ object UpdateChecker {
                 }
             }
             null
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            // Otherwise a network failure looks exactly like "already current".
+            DiagnosticLog.record("update/check", e)
             null
         }
     }

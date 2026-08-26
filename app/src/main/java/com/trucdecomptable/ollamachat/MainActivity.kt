@@ -182,6 +182,16 @@ class MainActivity : FragmentActivity() {
             }
         }
 
+        // A cold start is not the only moment an update matters: check again
+        // when the app comes back, throttled to once an hour by UpdateManager.
+        lifecycle.addObserver(LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) {
+                lifecycleScope.launch {
+                    UpdateManager.checkAtLaunch(settings.skippedUpdate.first())
+                }
+            }
+        })
+
         // Re-lock when the app goes to background (if enabled).
         lifecycle.addObserver(LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP && !isChangingConfigurations) {

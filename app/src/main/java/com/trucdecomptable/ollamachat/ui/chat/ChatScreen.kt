@@ -256,6 +256,17 @@ fun ChatScreen(
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    // Same reasoning as turbo: a setting worth flipping often
+                    // does not belong three taps deep in a menu. The entry
+                    // stays in ⋮ too, where a label makes it discoverable.
+                    IconButton(onClick = { showEphemeralDialog = true }) {
+                        Icon(
+                            Icons.Filled.Timer,
+                            contentDescription = stringResource(R.string.chat_menu_ephemeral),
+                            tint = if (state.ephemeralMinutes > 0) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.action_settings))
                     }
