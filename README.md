@@ -15,6 +15,11 @@ Client Android pour serveur **Ollama** — conversations locales et chiffrées, 
 - ⏱️ **Conversations éphémères** : effacement automatique après un délai sans activité
   (5 min à 24 h), réglable par conversation, avec compte à rebours visible. Le compteur
   repart à chaque message
+- 🟢 **Pastille de connexion** dans la barre du haut : verte quand le serveur Ollama répond,
+  rouge sinon, grise le temps du premier test. Un appui relance la vérification
+- 🔀 **Changement de modèle en pleine conversation** : le nom du modèle dans la barre du chat
+  ouvre la liste du serveur. Le changement ne vaut que pour cette conversation, l’historique
+  est conservé et le modèle suivant reprend là où le précédent s’est arrêté
 - 🧠 Raisonnement (`think`) et traces d’outils repliables
 - 🛠️ Outils : recherche web, lecture d’URL, météo, calcul, mémoire persistante, **serveurs MCP**
   — proposés uniquement aux modèles qui les déclarent

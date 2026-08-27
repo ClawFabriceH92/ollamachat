@@ -60,6 +60,8 @@
     <string name="chat_system_prompt_title">System prompt for this conversation</string>
     <string name="chat_model_title">Model for this conversation</string>
     <string name="chat_model_empty">No model — check the server connection</string>
+    <string name="chat_model_hint">The change applies to this conversation only; the history is kept.</string>
+    <string name="chat_model_switched">Model: %1$s</string>
     <string name="chat_delete_title">Delete permanently?</string>
     <string name="chat_delete_body">Every message in this conversation will be erased. This cannot be undone.</string>
     <string name="chat_clear_title">Clear conversation?</string>
@@ -286,4 +288,9 @@
     <string name="notification_generating_text">The answer keeps going while the app is in the background.</string>
     <string name="notification_update_available">OllamaChat v%1$s available</string>
     <string name="notification_update_downloading">Downloading update v%1$s…</string>
+
+    <!-- Server connection -->
+    <string name="connection_online">Ollama server connected</string>
+    <string name="connection_offline">Ollama server unreachable — check the address in the settings</string>
+    <string name="connection_checking">Checking the connection…</string>
 </resources>

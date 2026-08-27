@@ -28,11 +28,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Bookmark
@@ -63,6 +69,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -90,9 +97,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.trucdecomptable.ollamachat.OllamaChatApp
 import com.trucdecomptable.ollamachat.R
@@ -102,6 +112,8 @@ import com.trucdecomptable.ollamachat.data.db.images
 import com.trucdecomptable.ollamachat.data.ollama.ChatError
 import com.trucdecomptable.ollamachat.data.ollama.ChatErrorCode
 import com.trucdecomptable.ollamachat.data.repo.EphemeralPolicy
+import com.trucdecomptable.ollamachat.ui.common.ConnectionDot
+import com.trucdecomptable.ollamachat.ui.common.connectionLabel
 import com.trucdecomptable.ollamachat.ui.markdown.MarkdownText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -121,6 +133,9 @@ fun ChatScreen(
     vm: ChatViewModel = viewModel(factory = ChatViewModel.Factory(conversationId, app().container)),
 ) {
     val state by vm.uiState.collectAsState()
+    // Lifecycle-aware on purpose: dropping the collector when the screen stops
+    // is what stops the server being probed behind the user's back.
+    val connection by vm.connection.collectAsStateWithLifecycle()
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -210,12 +225,53 @@ fun ChatScreen(
                             fontWeight = FontWeight.SemiBold,
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = state.activeModel.ifBlank { stringResource(R.string.chat_model_undefined) },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                            )
+                            // Tap to re-probe: the dot answers "is the server
+                            // there?" without a trip through the settings.
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        vm.refreshConnection()
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar(
+                                                context.getString(connectionLabel(connection))
+                                            )
+                                        }
+                                    }
+                                    .padding(4.dp),
+                            ) { ConnectionDot(connection) }
+                            Spacer(Modifier.width(4.dp))
+                            // The model is switched often enough that burying
+                            // it two taps deep in ⋮ was a tap too many; the
+                            // menu entry stays, labelled, for discoverability.
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable {
+                                        vm.reloadModels()
+                                        showModelDialog = true
+                                    }
+                                    .padding(horizontal = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = state.activeModel.ifBlank {
+                                        stringResource(R.string.chat_model_undefined)
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                                Icon(
+                                    Icons.Filled.ArrowDropDown,
+                                    contentDescription = stringResource(R.string.chat_menu_model),
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                             // A countdown you cannot see is a countdown you
                             // will be surprised by.
                             remainingLabel?.let { label ->
@@ -287,7 +343,11 @@ fun ChatScreen(
                             )
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.chat_menu_model)) },
-                                onClick = { showMenu = false; showModelDialog = true },
+                                onClick = {
+                                    showMenu = false
+                                    vm.reloadModels()
+                                    showModelDialog = true
+                                },
                                 leadingIcon = { Icon(Icons.Filled.Refresh, null) },
                             )
                             DropdownMenuItem(
@@ -1072,15 +1132,36 @@ private fun ModelPickerDialog(
         title = { Text(stringResource(R.string.chat_model_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                models.forEach { m ->
-                    Text(
-                        text = m + if (m == selected) "  ✓" else "",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { selected = m }
-                            .padding(vertical = 8.dp),
-                        fontWeight = if (m == selected) FontWeight.Bold else FontWeight.Normal,
-                    )
+                Text(
+                    stringResource(R.string.chat_model_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                // A server with a dozen models used to overflow the dialog and
+                // push the buttons off screen.
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 320.dp)
+                        .verticalScroll(rememberScrollState())
+                        .selectableGroup(),
+                ) {
+                    models.forEach { m ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = m == selected,
+                                    onClick = { selected = m },
+                                    role = Role.RadioButton,
+                                )
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = m == selected, onClick = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(text = m, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
                 }
                 if (models.isEmpty()) Text(stringResource(R.string.chat_model_empty))
             }

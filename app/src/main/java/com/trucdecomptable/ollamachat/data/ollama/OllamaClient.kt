@@ -73,7 +73,7 @@ open class OllamaClient(
     }
 
     /** True when the server answers on /api/version. */
-    suspend fun testConnection(baseUrl: String): Result<Unit> = withContext(Dispatchers.IO) {
+    open suspend fun testConnection(baseUrl: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val req = Request.Builder()
                 .url("${normalizeBaseUrl(baseUrl)}/api/version")

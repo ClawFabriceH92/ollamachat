@@ -14,6 +14,8 @@ import com.trucdecomptable.ollamachat.data.db.Message
 import com.trucdecomptable.ollamachat.data.db.imagePathsOf
 import com.trucdecomptable.ollamachat.data.db.images
 import com.trucdecomptable.ollamachat.data.ollama.ChatError
+import com.trucdecomptable.ollamachat.data.ollama.ChatErrorCode
+import com.trucdecomptable.ollamachat.data.ollama.ConnectionStatus
 import com.trucdecomptable.ollamachat.data.ollama.ModelCapabilities
 import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
 import com.trucdecomptable.ollamachat.data.repo.TurboProfile
@@ -140,6 +142,11 @@ class ChatViewModel(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ChatUiState())
 
+    /** Green/red dot in the app bar; shared with the other screens. */
+    val connection: StateFlow<ConnectionStatus> = container.connectionMonitor.status
+
+    fun refreshConnection() = container.connectionMonitor.refresh()
+
     /** Widens the observed window by one page. */
     fun loadOlderMessages() {
         windowSize.value += WINDOW_STEP
@@ -183,6 +190,15 @@ class ChatViewModel(
     private suspend fun resolveModel(): String {
         val conv = db.conversationDao().getById(conversationId)
         return conv?.model ?: settings.model.first()
+    }
+
+    /**
+     * Re-reads the server's model list. Called when the picker opens: a list
+     * fetched once at construction is empty forever if the server happened to
+     * be down then, which read as "this server has no models".
+     */
+    fun reloadModels() {
+        viewModelScope.launch { refreshModels() }
     }
 
     private suspend fun refreshModels() {
@@ -289,6 +305,14 @@ class ChatViewModel(
     }
 
     private fun onResult(finalText: String?, statsLine: String?, error: ChatError?, cancelled: Boolean) {
+        // Real traffic is fresher evidence than the next scheduled probe: a
+        // send that just failed to reach the server should redden the dot now,
+        // not in twenty seconds.
+        when (error?.code) {
+            null -> container.connectionMonitor.report(true)
+            ChatErrorCode.CONNECTION, ChatErrorCode.TIMEOUT -> container.connectionMonitor.report(false)
+            else -> Unit
+        }
         if (error != null) {
             transient.update {
                 it.copy(streamingText = "", streamingThinking = "", error = error, toast = null)
@@ -429,10 +453,16 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Switches model for this conversation only, mid-thread: the history is
+     * replayed to whatever model answers next, so the new one picks up where
+     * the previous one stopped.
+     */
     fun setConversationModel(model: String) {
         viewModelScope.launch {
             val conv = db.conversationDao().getById(conversationId) ?: return@launch
             db.conversationDao().update(conv.copy(model = model))
+            toast(R.string.chat_model_switched, model)
             refreshCapabilities(model)
         }
     }

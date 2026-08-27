@@ -4,6 +4,7 @@ import android.app.Application
 import com.trucdecomptable.ollamachat.data.backup.BackupManager
 import com.trucdecomptable.ollamachat.data.db.AppDatabase
 import com.trucdecomptable.ollamachat.data.db.ImageStore
+import com.trucdecomptable.ollamachat.data.ollama.ConnectionMonitor
 import com.trucdecomptable.ollamachat.data.ollama.OllamaClient
 import com.trucdecomptable.ollamachat.data.prefs.SettingsRepository
 import com.trucdecomptable.ollamachat.data.repo.ChatRepository
@@ -53,9 +54,13 @@ class OllamaChatApp : Application() {
 
 /** Simple manual DI container — no Hilt, keeps the build light. */
 class AppContainer(app: Application) {
+    /** Outlives every ViewModel: the connection status is shared by all screens. */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     val database: AppDatabase = AppDatabase.get(app)
     val settings: SettingsRepository = SettingsRepository(app)
     val ollamaClient: OllamaClient = OllamaClient()
     val chatRepository: ChatRepository = ChatRepository(database, settings, ollamaClient)
     val backupManager: BackupManager = BackupManager(app, database, BuildConfig.VERSION_NAME)
+    val connectionMonitor: ConnectionMonitor = ConnectionMonitor(settings.baseUrl, ollamaClient, scope)
 }

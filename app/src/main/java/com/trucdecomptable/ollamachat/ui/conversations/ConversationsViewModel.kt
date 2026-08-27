@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.trucdecomptable.ollamachat.AppContainer
 import com.trucdecomptable.ollamachat.data.db.ConversationSummary
+import com.trucdecomptable.ollamachat.data.ollama.ConnectionStatus
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -38,6 +39,11 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
     val uiState: StateFlow<ConversationsUiState> = combine(active, archived, query) { a, b, q ->
         ConversationsUiState(active = a, archived = b, query = q)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ConversationsUiState())
+
+    /** Green/red dot in the app bar; shared with the chat screen. */
+    val connection: StateFlow<ConnectionStatus> = container.connectionMonitor.status
+
+    fun refreshConnection() = container.connectionMonitor.refresh()
 
     fun onQueryChange(value: String) {
         query.value = value
