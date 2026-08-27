@@ -288,6 +288,7 @@ fun SettingsScreen(
             IntField(stringResource(R.string.settings_top_k), state.topK, vm::onTopKChange)
             IntField(stringResource(R.string.settings_num_predict), state.numPredict, vm::onNumPredictChange)
             IntField(stringResource(R.string.settings_num_ctx), state.numCtx, vm::onNumCtxChange)
+            Hint(stringResource(R.string.settings_num_ctx_help))
             OutlinedTextField(
                 value = state.keepAlive,
                 onValueChange = vm::onKeepAliveChange,

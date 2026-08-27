@@ -58,7 +58,18 @@ class SettingsRepository(private val context: Context) {
         val topP: Double = 0.9
         val topK: Int = 40
         val numPredict: Int = 4096
-        val numCtx: Int = 8192
+
+        /**
+         * 8 k was tight enough that a working conversation got compacted after
+         * a handful of long turns. Every model still supported today handles
+         * 16 k, and the cost falls on the server: a bigger window means a
+         * bigger KV cache in RAM (or VRAM), so a small machine may want to put
+         * this back down — the field says so.
+         *
+         * Only installs that never touched the field move: a value chosen in
+         * the settings is stored and wins over this.
+         */
+        val numCtx: Int = 16384
         val keepAlive: String = "5m"
         val streaming: Boolean = true
         val defaultSystemPrompt: String =

@@ -34,7 +34,7 @@ data class SettingsUiState(
     val topP: Double = 0.9,
     val topK: Int = 40,
     val numPredict: Int = 4096,
-    val numCtx: Int = 8192,
+    val numCtx: Int = 16384,
     val keepAlive: String = "5m",
     val streaming: Boolean = true,
     val defaultSystemPrompt: String = "",

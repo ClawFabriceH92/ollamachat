@@ -147,6 +147,7 @@
     <string name="settings_top_k">top_k</string>
     <string name="settings_num_predict">Max tokens (num_predict)</string>
     <string name="settings_num_ctx">Contexte (num_ctx)</string>
+    <string name="settings_num_ctx_help">16384 par défaut. Une fenêtre plus grande garde plus de conversation avant résumé, mais le serveur y consacre d’autant plus de mémoire : à baisser si la machine est juste.</string>
     <string name="settings_keep_alive">Keep alive (ex. 5m, -1 = toujours)</string>
     <string name="settings_streaming">Streaming (réponse en direct)</string>
     <string name="settings_compact">Compacter automatiquement le contexte</string>
