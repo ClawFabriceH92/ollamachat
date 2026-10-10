@@ -75,6 +75,7 @@ import com.trucdecomptable.ollamachat.update.UpdateManager
 import com.trucdecomptable.ollamachat.ui.theme.dynamicColorAvailable
 import com.trucdecomptable.ollamachat.ui.chat.resolve
 import com.trucdecomptable.ollamachat.util.DiagnosticLog
+import com.trucdecomptable.ollamachat.util.LogExpert
 import com.trucdecomptable.ollamachat.util.PinUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -84,6 +85,9 @@ fun SettingsScreen(
     vm: SettingsViewModel = viewModel(factory = SettingsViewModel.Factory(app().container)),
 ) {
     val state by vm.uiState.collectAsState()
+    // The analysis is a pure read of the in-memory log: instant, so it needs
+    // no view-model round trip. Null means "not asked for".
+    var logFindings by remember { mutableStateOf<List<LogExpert.Finding>?>(null) }
     var showPinDialog by remember { mutableStateOf(false) }
     var showMcpDialog by remember { mutableStateOf(false) }
     var showModelsDialog by remember { mutableStateOf(false) }
@@ -170,6 +174,12 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .clickable { vm.applyScanResult(result) }
                         .padding(vertical = 6.dp),
+                )
+            }
+            state.scannedSubnets?.takeIf { state.scanResults.isEmpty() }?.let { subnets ->
+                Hint(
+                    if (subnets.isEmpty()) stringResource(R.string.scan_none_no_subnet)
+                    else stringResource(R.string.scan_none, subnets.joinToString(", "))
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -450,6 +460,11 @@ fun SettingsScreen(
             }
             Hint(stringResource(R.string.settings_connectivity_help))
 
+            OutlinedButton(
+                onClick = { logFindings = LogExpert.analyze(DiagnosticLog.snapshot()) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(stringResource(R.string.settings_log_expert)) }
+
             TextButton(onClick = { shareDiagnostics(context) }) {
                 Text(stringResource(R.string.settings_diagnostics))
             }
@@ -480,6 +495,10 @@ fun SettingsScreen(
             },
             onConfirm = { old, new, confirm -> vm.changePin(old, new, confirm) },
         )
+    }
+
+    logFindings?.let { findings ->
+        LogExpertDialog(findings = findings, onDismiss = { logFindings = null })
     }
 
     state.connectivityReport?.let { report ->
@@ -747,6 +766,57 @@ private fun SectionTitle(text: String) {
         style = MaterialTheme.typography.titleSmall,
         fontWeight = FontWeight.Bold,
         color = MaterialTheme.colorScheme.primary,
+    )
+}
+
+/**
+ * The analysis, with the log line each finding was drawn from.
+ *
+ * The evidence is shown rather than hidden: a verdict the user cannot check
+ * is worth no more than the raw log it replaced.
+ */
+@Composable
+private fun LogExpertDialog(
+    findings: List<LogExpert.Finding>,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.settings_log_expert)) },
+        text = {
+            if (findings.isEmpty()) {
+                Text(stringResource(R.string.log_expert_nothing))
+            } else {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    findings.forEach { finding ->
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = finding.title +
+                                    if (finding.occurrences > 1) "  (×${finding.occurrences})" else "",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = if (finding.severity == LogExpert.Severity.BLOCKING) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                            )
+                            Text(finding.action, style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                text = finding.evidence,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) }
+        },
     )
 }
 
