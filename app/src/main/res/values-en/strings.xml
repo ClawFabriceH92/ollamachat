@@ -293,4 +293,19 @@
     <string name="notification_generating_text">The answer keeps going while the app is in the background.</string>
     <string name="notification_update_available">OllamaChat v%1$s available</string>
     <string name="notification_update_downloading">Downloading update v%1$s…</string>
+    <string name="tool_approval_title">Allow this tool?</string>
+    <string name="tool_approval_from_server">The model wants to run “%1$s”, provided by the MCP server “%2$s”.</string>
+    <string name="tool_approval_from_app">The model wants to run “%1$s”.</string>
+    <string name="tool_approval_warning">This app cannot know what a tool from an MCP server does. Read the arguments before allowing it.</string>
+    <string name="tool_approval_once">Allow once</string>
+    <string name="tool_approval_always">Always</string>
+    <string name="tool_approval_deny">Refuse</string>
+    <string name="settings_section_agent">Agent</string>
+    <string name="settings_tool_approval">Ask before external tools</string>
+    <string name="settings_tool_approval_help">Built-in read-only tools (search, time, calculation, weather) always run without asking. MCP tools need approval: the app cannot know what they do.</string>
+    <string name="settings_tool_allowlist">Always-allowed tools (%1$d)</string>
+    <string name="settings_tool_allowlist_empty">No tool is permanently allowed.</string>
+    <string name="settings_tool_revoke_all">Revoke all</string>
+    <string name="settings_tool_loop_max">Maximum steps per message: %1$d</string>
+    <string name="settings_tool_loop_help">How many tool round-trips the model may chain for one question. Higher means it goes further on its own; every step resends the whole context to the server, so every step costs time.</string>
 </resources>

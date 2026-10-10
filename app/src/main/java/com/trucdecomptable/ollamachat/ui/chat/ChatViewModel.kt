@@ -17,10 +17,15 @@ import com.trucdecomptable.ollamachat.data.ollama.ChatError
 import com.trucdecomptable.ollamachat.data.ollama.ModelCapabilities
 import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
 import com.trucdecomptable.ollamachat.data.repo.TurboProfile
+import com.trucdecomptable.ollamachat.data.tools.ApprovalDecision
+import com.trucdecomptable.ollamachat.data.tools.ApprovalRequest
+import com.trucdecomptable.ollamachat.data.tools.ToolApprover
 import com.trucdecomptable.ollamachat.data.web.UrlFetcher
 import com.trucdecomptable.ollamachat.data.web.WebSearchClient
 import com.trucdecomptable.ollamachat.ui.documents.DocumentExtractor
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -64,6 +69,22 @@ data class ChatUiState(
     val activeModel: String get() = conversationModel ?: defaultModel
 }
 
+/**
+ * A tool call waiting on the user.
+ *
+ * The repository coroutine is suspended on [answer] while this sits in the
+ * UI state, which is what lets a background generation stop and ask instead
+ * of acting.
+ */
+class PendingApproval(
+    val request: ApprovalRequest,
+    private val answer: CompletableDeferred<ApprovalDecision>,
+) {
+    fun resolve(decision: ApprovalDecision) {
+        answer.complete(decision)
+    }
+}
+
 /** Transient (non-persisted) UI state merged with the Room flows. */
 private data class Transient(
     val streamingText: String = "",
@@ -85,6 +106,27 @@ class ChatViewModel(
     private val settings = container.settings
 
     private val transient = MutableStateFlow(Transient())
+
+    private val _pendingApproval = MutableStateFlow<PendingApproval?>(null)
+    val pendingApproval: StateFlow<PendingApproval?> = _pendingApproval.asStateFlow()
+
+    private val approver = object : ToolApprover {
+        override suspend fun request(request: ApprovalRequest): ApprovalDecision {
+            val answer = CompletableDeferred<ApprovalDecision>()
+            _pendingApproval.value = PendingApproval(request, answer)
+            return try {
+                answer.await()
+            } finally {
+                // Also runs when the generation is cancelled, so a stopped
+                // turn never leaves a dialog hanging over the chat.
+                _pendingApproval.value = null
+            }
+        }
+    }
+
+    fun resolveApproval(decision: ApprovalDecision) {
+        _pendingApproval.value?.resolve(decision)
+    }
 
     /**
      * Tokens land here first and reach Compose at most every
@@ -170,6 +212,9 @@ class ChatViewModel(
     }
 
     init {
+        // The repository is application-scoped and only one chat is on screen,
+        // so the live view model is the one that answers.
+        repo.approver = approver
         viewModelScope.launch {
             refreshModels()
             if (settings.turboEnabled.first()) warmUpModel()
@@ -500,6 +545,9 @@ class ChatViewModel(
     }
 
     override fun onCleared() {
+        // Only stand down if a newer view model has not already taken over:
+        // clobbering its approver would leave it unable to ask.
+        if (repo.approver === approver) repo.approver = ToolApprover.DenyAll
         super.onCleared()
         publishStream(force = true)
     }
