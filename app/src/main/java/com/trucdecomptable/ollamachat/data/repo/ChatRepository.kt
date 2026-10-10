@@ -18,7 +18,11 @@ import com.trucdecomptable.ollamachat.data.ollama.ToolCall
 import com.trucdecomptable.ollamachat.data.ollama.ToolDef
 import com.trucdecomptable.ollamachat.data.prefs.McpServer
 import com.trucdecomptable.ollamachat.data.prefs.SettingsRepository
+import com.trucdecomptable.ollamachat.data.tools.ApprovalDecision
+import com.trucdecomptable.ollamachat.data.tools.ApprovalRequest
+import com.trucdecomptable.ollamachat.data.tools.ToolApprover
 import com.trucdecomptable.ollamachat.data.tools.ToolExecutor
+import com.trucdecomptable.ollamachat.data.tools.ToolPolicy
 import com.trucdecomptable.ollamachat.util.DiagnosticLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -28,6 +32,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
 /**
@@ -70,7 +75,14 @@ class ChatRepository(
     /** Capabilities are stable per (server, model) — asking once is enough. */
     private val capabilityCache = mutableMapOf<String, ModelCapabilities>()
 
-    private val maxToolLoop = 5
+    /**
+     * Who the repository asks before running a tool it did not write.
+     *
+     * Defaults to refusing: with nobody to ask, silence is not consent, and
+     * an MCP tool acting unattended is exactly what the gate exists to stop.
+     */
+    @Volatile
+    var approver: ToolApprover = ToolApprover.DenyAll
 
     /**
      * Stops the answer in progress. The tokens already generated are kept and
@@ -257,7 +269,8 @@ class ChatRepository(
         // 3. Tool-calling loop.
         var working = messages
         var result: ChatStreamResult? = null
-        for (iteration in 0 until maxToolLoop) {
+        val loopMax = if (turbo) 1 else settings.toolLoopMax.first()
+        for (iteration in 0 until loopMax) {
             val round = client.chatStream(
                 baseUrl = baseUrl,
                 model = model,
@@ -360,7 +373,44 @@ class ChatRepository(
         )
     }
 
+    /** Sent back to the model so a refusal ends the attempt instead of looping. */
+    private val refused =
+        "Refusé par l'utilisateur : l'outil n'a pas été exécuté. Ne le rappelle pas ; " +
+            "poursuis sans lui, ou explique ce qu'il te manque."
+
     private suspend fun runTool(
+        tc: ToolCall,
+        mcpServers: List<McpServer>,
+        braveKey: String,
+    ): String {
+        val prefixes = mcpServers.map { it.name }
+        // Re-read per call: saying "always" mid-turn has to take effect now,
+        // not on the next message.
+        val gateEnabled = settings.toolApprovalEnabled.first()
+        val allowed = settings.toolAllowlist.first()
+        if (ToolPolicy.needsApproval(tc.name, prefixes, gateEnabled, allowed)) {
+            val decision = withTimeoutOrNull(ToolPolicy.APPROVAL_TIMEOUT_MS) {
+                approver.request(
+                    ApprovalRequest(
+                        toolName = tc.name,
+                        serverName = ToolPolicy.serverOf(tc.name, prefixes),
+                        arguments = tc.arguments,
+                    )
+                )
+            } ?: ApprovalDecision.DENY
+            when (decision) {
+                ApprovalDecision.ALWAYS -> settings.allowTool(tc.name)
+                ApprovalDecision.ONCE -> Unit
+                ApprovalDecision.DENY -> {
+                    DiagnosticLog.record("outil", "${tc.name} non autorisé")
+                    return refused
+                }
+            }
+        }
+        return dispatch(tc, mcpServers, braveKey)
+    }
+
+    private suspend fun dispatch(
         tc: ToolCall,
         mcpServers: List<McpServer>,
         braveKey: String,

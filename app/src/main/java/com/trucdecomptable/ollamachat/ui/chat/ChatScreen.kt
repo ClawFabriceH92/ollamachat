@@ -10,6 +10,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -101,6 +103,8 @@ import com.trucdecomptable.ollamachat.data.db.Message
 import com.trucdecomptable.ollamachat.data.db.images
 import com.trucdecomptable.ollamachat.data.ollama.ChatError
 import com.trucdecomptable.ollamachat.data.ollama.ChatErrorCode
+import com.trucdecomptable.ollamachat.data.tools.ApprovalDecision
+import com.trucdecomptable.ollamachat.data.tools.ApprovalRequest
 import com.trucdecomptable.ollamachat.data.repo.EphemeralPolicy
 import com.trucdecomptable.ollamachat.ui.markdown.MarkdownText
 import kotlinx.coroutines.Dispatchers
@@ -121,6 +125,7 @@ fun ChatScreen(
     vm: ChatViewModel = viewModel(factory = ChatViewModel.Factory(conversationId, app().container)),
 ) {
     val state by vm.uiState.collectAsState()
+    val pendingApproval by vm.pendingApproval.collectAsState()
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -554,6 +559,73 @@ fun ChatScreen(
             onDismiss = { showConfirmDelete = false },
         )
     }
+
+    pendingApproval?.let { pending ->
+        ToolApprovalDialog(
+            request = pending.request,
+            onDecision = { vm.resolveApproval(it) },
+        )
+    }
+}
+
+/**
+ * Asks before running a tool the app did not write.
+ *
+ * The arguments are shown in full rather than summarised: the whole point is
+ * that the user can see what the tool is about to be asked to do, and a
+ * summary is exactly where a harmful argument would hide. There is no
+ * dismiss-by-tapping-outside — a generation is suspended on this answer, so
+ * it has to be an answer.
+ */
+@Composable
+private fun ToolApprovalDialog(
+    request: ApprovalRequest,
+    onDecision: (ApprovalDecision) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = { onDecision(ApprovalDecision.DENY) },
+        title = { Text(stringResource(R.string.tool_approval_title)) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = request.serverName?.let {
+                        stringResource(R.string.tool_approval_from_server, request.toolName, it)
+                    } ?: stringResource(R.string.tool_approval_from_app, request.toolName),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (request.arguments.isNotBlank()) {
+                    Text(
+                        text = request.arguments,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.tool_approval_warning),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onDecision(ApprovalDecision.ONCE) }) {
+                Text(stringResource(R.string.tool_approval_once))
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { onDecision(ApprovalDecision.DENY) }) {
+                    Text(stringResource(R.string.tool_approval_deny))
+                }
+                TextButton(onClick = { onDecision(ApprovalDecision.ALWAYS) }) {
+                    Text(stringResource(R.string.tool_approval_always))
+                }
+            }
+        },
+    )
 }
 
 /** Maps a data-layer error code to a localized message. */

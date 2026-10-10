@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.trucdecomptable.ollamachat.security.SecretVault
 import kotlinx.coroutines.flow.Flow
@@ -47,6 +48,9 @@ class SettingsRepository(private val context: Context) {
         val TURBO_MODEL = stringPreferencesKey("turbo_model")
         val SKIPPED_UPDATE = stringPreferencesKey("skipped_update")
         val DEFAULT_EPHEMERAL = intPreferencesKey("default_ephemeral_minutes")
+        val TOOL_APPROVAL = booleanPreferencesKey("tool_approval_enabled")
+        val TOOL_ALLOWLIST = stringSetPreferencesKey("tool_allowlist")
+        val TOOL_LOOP_MAX = intPreferencesKey("tool_loop_max")
     }
 
     val defaults = Defaults()
@@ -74,6 +78,11 @@ class SettingsRepository(private val context: Context) {
         val turboEnabled: Boolean = false
         val turboModel: String = ""
         val defaultEphemeralMinutes: Int = 0
+        // On by default: a tool the app did not write should not act
+        // without being asked about, least of all the first time.
+        val toolApprovalEnabled: Boolean = true
+        val toolAllowlist: Set<String> = emptySet()
+        val toolLoopMax: Int = 8
     }
 
     // --- flows ---
@@ -118,6 +127,12 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.data.map { it[Keys.DYNAMIC_COLOR] ?: defaults.dynamicColor }
     val turboEnabled: Flow<Boolean> =
         context.dataStore.data.map { it[Keys.TURBO_ENABLED] ?: defaults.turboEnabled }
+    val toolApprovalEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[Keys.TOOL_APPROVAL] ?: defaults.toolApprovalEnabled }
+    val toolAllowlist: Flow<Set<String>> =
+        context.dataStore.data.map { it[Keys.TOOL_ALLOWLIST] ?: defaults.toolAllowlist }
+    val toolLoopMax: Flow<Int> =
+        context.dataStore.data.map { it[Keys.TOOL_LOOP_MAX] ?: defaults.toolLoopMax }
     val turboModel: Flow<String> =
         context.dataStore.data.map { it[Keys.TURBO_MODEL] ?: defaults.turboModel }
     val skippedUpdate: Flow<String> =
@@ -163,6 +178,9 @@ class SettingsRepository(private val context: Context) {
             turboEnabled = p[Keys.TURBO_ENABLED] ?: defaults.turboEnabled,
             turboModel = p[Keys.TURBO_MODEL] ?: defaults.turboModel,
             defaultEphemeralMinutes = p[Keys.DEFAULT_EPHEMERAL] ?: defaults.defaultEphemeralMinutes,
+            toolApprovalEnabled = p[Keys.TOOL_APPROVAL] ?: defaults.toolApprovalEnabled,
+            toolAllowlist = p[Keys.TOOL_ALLOWLIST] ?: defaults.toolAllowlist,
+            toolLoopMax = p[Keys.TOOL_LOOP_MAX] ?: defaults.toolLoopMax,
         )
     }
 
@@ -189,6 +207,23 @@ class SettingsRepository(private val context: Context) {
     suspend fun setDynamicColor(v: Boolean) = context.dataStore.edit { it[Keys.DYNAMIC_COLOR] = v }
     suspend fun setTurboEnabled(v: Boolean) = context.dataStore.edit { it[Keys.TURBO_ENABLED] = v }
     suspend fun setTurboModel(v: String) = context.dataStore.edit { it[Keys.TURBO_MODEL] = v }
+    suspend fun setToolApprovalEnabled(v: Boolean) =
+        context.dataStore.edit { it[Keys.TOOL_APPROVAL] = v }
+
+    /** The loop budget, clamped so a typo cannot start a runaway agent. */
+    suspend fun setToolLoopMax(v: Int) =
+        context.dataStore.edit { it[Keys.TOOL_LOOP_MAX] = v.coerceIn(1, 25) }
+
+    suspend fun allowTool(name: String) = context.dataStore.edit {
+        it[Keys.TOOL_ALLOWLIST] = (it[Keys.TOOL_ALLOWLIST] ?: emptySet()) + name
+    }
+
+    suspend fun revokeTool(name: String) = context.dataStore.edit {
+        it[Keys.TOOL_ALLOWLIST] = (it[Keys.TOOL_ALLOWLIST] ?: emptySet()) - name
+    }
+
+    suspend fun revokeAllTools() = context.dataStore.edit { it[Keys.TOOL_ALLOWLIST] = emptySet() }
+
     suspend fun setSkippedUpdate(v: String) = context.dataStore.edit { it[Keys.SKIPPED_UPDATE] = v }
     suspend fun setDefaultEphemeralMinutes(v: Int) = context.dataStore.edit { it[Keys.DEFAULT_EPHEMERAL] = v }
 
@@ -291,4 +326,7 @@ data class SettingsSnapshot(
     val turboEnabled: Boolean,
     val turboModel: String,
     val defaultEphemeralMinutes: Int,
+    val toolApprovalEnabled: Boolean,
+    val toolAllowlist: Set<String>,
+    val toolLoopMax: Int,
 )

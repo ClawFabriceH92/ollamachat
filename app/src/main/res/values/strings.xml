@@ -295,4 +295,19 @@
     <string name="notification_generating_text">La réponse continue même si l’app est en arrière-plan.</string>
     <string name="notification_update_available">OllamaChat v%1$s disponible</string>
     <string name="notification_update_downloading">Mise à jour v%1$s en cours de téléchargement…</string>
+    <string name="tool_approval_title">Autoriser cet outil ?</string>
+    <string name="tool_approval_from_server">Le modèle veut exécuter « %1$s », fourni par le serveur MCP « %2$s ».</string>
+    <string name="tool_approval_from_app">Le modèle veut exécuter « %1$s ».</string>
+    <string name="tool_approval_warning">Cette application ne sait pas ce que fait un outil venu d’un serveur MCP. Lis les arguments avant d’autoriser.</string>
+    <string name="tool_approval_once">Autoriser une fois</string>
+    <string name="tool_approval_always">Toujours</string>
+    <string name="tool_approval_deny">Refuser</string>
+    <string name="settings_section_agent">Agent</string>
+    <string name="settings_tool_approval">Demander avant les outils externes</string>
+    <string name="settings_tool_approval_help">Les outils intégrés en lecture (recherche, heure, calcul, météo) s’exécutent toujours sans demander. Les outils MCP sont soumis à autorisation : l’application ne peut pas savoir ce qu’ils font.</string>
+    <string name="settings_tool_allowlist">Outils toujours autorisés (%1$d)</string>
+    <string name="settings_tool_allowlist_empty">Aucun outil n’est autorisé en permanence.</string>
+    <string name="settings_tool_revoke_all">Tout révoquer</string>
+    <string name="settings_tool_loop_max">Étapes maximum par message : %1$d</string>
+    <string name="settings_tool_loop_help">Combien d’allers-retours d’outils le modèle peut enchaîner pour une seule question. Plus haut, il va plus loin seul ; chaque étape renvoie tout le contexte au serveur, donc chaque étape coûte du temps.</string>
 </resources>

@@ -67,6 +67,9 @@ data class SettingsUiState(
     val connectivityBusy: Boolean = false,
     val connectivityReport: String? = null,
     val scannedSubnets: List<String>? = null,
+    val toolApprovalEnabled: Boolean = true,
+    val toolAllowlist: List<String> = emptyList(),
+    val toolLoopMax: Int = 8,
 )
 
 /** Transient (non-persisted) UI state merged into the settings snapshot. */
@@ -131,6 +134,9 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             backupMessage = tr.backupMessage,
             pullingModel = tr.pullingModel,
             pullProgress = tr.pullProgress,
+            toolApprovalEnabled = snap.toolApprovalEnabled,
+            toolAllowlist = snap.toolAllowlist.sorted(),
+            toolLoopMax = snap.toolLoopMax,
             connectivityBusy = tr.connectivityBusy,
             connectivityReport = tr.connectivityReport,
             scannedSubnets = tr.scannedSubnets,
@@ -266,6 +272,14 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     fun consumeConnectivityReport() = transient.update { it.copy(connectivityReport = null) }
+
+    fun onToolApprovalChange(v: Boolean) = viewModelScope.launch { settings.setToolApprovalEnabled(v) }
+
+    fun onToolLoopMaxChange(v: Int) = viewModelScope.launch { settings.setToolLoopMax(v) }
+
+    fun revokeTool(name: String) = viewModelScope.launch { settings.revokeTool(name) }
+
+    fun revokeAllTools() = viewModelScope.launch { settings.revokeAllTools() }
 
     /** Scans the local network for Ollama servers and stores the results. */
     fun scanNetwork() {

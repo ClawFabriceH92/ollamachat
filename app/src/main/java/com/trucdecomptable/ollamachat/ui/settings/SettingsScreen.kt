@@ -330,6 +330,51 @@ fun SettingsScreen(
             Hint(stringResource(R.string.settings_tools_help))
 
             HorizontalDivider()
+            SectionTitle(stringResource(R.string.settings_section_agent))
+            SwitchRow(
+                label = stringResource(R.string.settings_tool_approval),
+                checked = state.toolApprovalEnabled,
+                onChange = vm::onToolApprovalChange,
+            )
+            Hint(stringResource(R.string.settings_tool_approval_help))
+
+            Text(
+                text = stringResource(R.string.settings_tool_loop_max, state.toolLoopMax),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Slider(
+                value = state.toolLoopMax.toFloat(),
+                onValueChange = { vm.onToolLoopMaxChange(it.toInt()) },
+                valueRange = 1f..25f,
+                steps = 23,
+            )
+            Hint(stringResource(R.string.settings_tool_loop_help))
+
+            Text(
+                text = stringResource(R.string.settings_tool_allowlist, state.toolAllowlist.size),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (state.toolAllowlist.isEmpty()) {
+                Hint(stringResource(R.string.settings_tool_allowlist_empty))
+            } else {
+                state.toolAllowlist.forEach { tool ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(tool, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { vm.revokeTool(tool) }) {
+                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.action_delete))
+                        }
+                    }
+                }
+                TextButton(onClick = { vm.revokeAllTools() }) {
+                    Text(stringResource(R.string.settings_tool_revoke_all))
+                }
+            }
+
+            HorizontalDivider()
             SectionTitle(stringResource(R.string.settings_section_mcp))
             state.mcpServers.forEach { server ->
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

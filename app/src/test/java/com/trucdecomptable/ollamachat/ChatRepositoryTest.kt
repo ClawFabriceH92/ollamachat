@@ -12,6 +12,10 @@ import com.trucdecomptable.ollamachat.data.ollama.ModelCapabilities
 import com.trucdecomptable.ollamachat.data.ollama.OllamaChatMessage
 import com.trucdecomptable.ollamachat.data.ollama.OllamaClient
 import com.trucdecomptable.ollamachat.data.ollama.ToolCall
+import com.trucdecomptable.ollamachat.data.prefs.McpServer
+import com.trucdecomptable.ollamachat.data.tools.ApprovalDecision
+import com.trucdecomptable.ollamachat.data.tools.ApprovalRequest
+import com.trucdecomptable.ollamachat.data.tools.ToolApprover
 import com.trucdecomptable.ollamachat.data.ollama.ToolDef
 import com.trucdecomptable.ollamachat.data.prefs.SettingsRepository
 import com.trucdecomptable.ollamachat.data.repo.ChatRepository
@@ -123,6 +127,9 @@ class ChatRepositoryTest {
             settings.setKeepAlive("5m")
             settings.setTurboEnabled(false)
             settings.setTurboModel("")
+            settings.setToolApprovalEnabled(true)
+            settings.setToolLoopMax(8)
+            settings.revokeAllTools()
         }
     }
 
@@ -196,6 +203,93 @@ class ChatRepositoryTest {
         assertEquals("tool", stored[2].first)
         assertEquals("assistant" to "Il est midi.", stored[3])
         assertEquals("get_current_time", db.messageDao().listForConversation(id)[2].toolName)
+    }
+
+    @Test
+    fun `an unknown tool is refused when there is nobody to ask`() = runBlocking {
+        // The repository keeps its DenyAll approver: no UI is attached. Silence
+        // must not be read as consent, so the call never runs.
+        val id = newConversation()
+        val client = FakeClient(
+            mutableListOf(
+                ChatStreamResult("", toolCalls = listOf(ToolCall("fichiers_supprimer", """{"path":"/"}"""))),
+                ChatStreamResult("Je ne peux pas."),
+            )
+        )
+        send(repository(client), id, "Supprime tout")
+
+        val trace = db.messageDao().listForConversation(id).first { it.role == "tool" }
+        assertTrue(trace.content, trace.content.startsWith("Refusé par l'utilisateur"))
+        // The model is told to move on rather than left to retry in a loop.
+        assertTrue(trace.content, trace.content.contains("Ne le rappelle pas"))
+    }
+
+    @Test
+    fun `an approved tool runs`() = runBlocking {
+        val id = newConversation()
+        val client = FakeClient(
+            mutableListOf(
+                ChatStreamResult("", toolCalls = listOf(ToolCall("inconnu", "{}"))),
+                ChatStreamResult("Voilà."),
+            )
+        )
+        val repo = repository(client)
+        repo.approver = object : ToolApprover {
+            override suspend fun request(request: ApprovalRequest) = ApprovalDecision.ONCE
+        }
+        send(repo, id, "Vas-y")
+
+        val trace = db.messageDao().listForConversation(id).first { it.role == "tool" }
+        assertTrue(trace.content, !trace.content.startsWith("Refusé"))
+    }
+
+    @Test
+    fun `the dialog is told which server the tool came from`() = runBlocking {
+        val id = newConversation()
+        settings.setMcpServers(listOf(McpServer(name = "fichiers", url = "http://localhost:9000")))
+        val client = FakeClient(
+            mutableListOf(
+                ChatStreamResult("", toolCalls = listOf(ToolCall("fichiers_lire", "{}"))),
+                ChatStreamResult("Lu."),
+            )
+        )
+        val repo = repository(client)
+        var seen: ApprovalRequest? = null
+        repo.approver = object : ToolApprover {
+            override suspend fun request(request: ApprovalRequest): ApprovalDecision {
+                seen = request
+                return ApprovalDecision.DENY
+            }
+        }
+        send(repo, id, "Lis")
+        settings.setMcpServers(emptyList())
+
+        assertEquals("fichiers_lire", seen?.toolName)
+        assertEquals("fichiers", seen?.serverName)
+    }
+
+    @Test
+    fun `turning the gate off runs the tool without asking`() = runBlocking {
+        val id = newConversation()
+        settings.setToolApprovalEnabled(false)
+        val client = FakeClient(
+            mutableListOf(
+                ChatStreamResult("", toolCalls = listOf(ToolCall("inconnu", "{}"))),
+                ChatStreamResult("Fait."),
+            )
+        )
+        val repo = repository(client)
+        var asked = false
+        repo.approver = object : ToolApprover {
+            override suspend fun request(request: ApprovalRequest): ApprovalDecision {
+                asked = true
+                return ApprovalDecision.DENY
+            }
+        }
+        send(repo, id, "Vas-y")
+        settings.setToolApprovalEnabled(true)
+
+        assertTrue("l'utilisateur a été interrogé alors que la barrière est coupée", !asked)
     }
 
     @Test
