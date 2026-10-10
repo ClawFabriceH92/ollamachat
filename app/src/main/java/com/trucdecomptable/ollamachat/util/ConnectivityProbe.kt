@@ -39,7 +39,7 @@ object ConnectivityProbe {
                 append(leg.detail.ifBlank { if (leg.ok) "joignable" else "injoignable" })
                 appendLine(" (${leg.millis} ms)")
             }
-            ConnectivityProbe.diagnosis(this)?.let {
+            ConnectivityProbe.diagnosis(this@Report)?.let {
                 appendLine()
                 append(it)
             }
