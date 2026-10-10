@@ -219,6 +219,8 @@
     <string name="chat_load_older">Charger les messages précédents</string>
     <string name="settings_connectivity">Tester la connectivité</string>
     <string name="settings_connectivity_help">Interroge séparément le serveur Ollama et l’hôte des mises à jour. Un tunnel VPN casse l’un ou l’autre selon son routage, et ce test dit lequel.</string>
+    <string name="settings_log_expert">Analyser le journal</string>
+    <string name="log_expert_nothing">Rien de concluant dans le journal. Cela ne veut pas dire que tout va bien : seulement qu’aucune panne connue n’y laisse sa trace. Reproduis le problème, puis relance l’analyse.</string>
     <string name="settings_diagnostics">Partager le journal de diagnostic</string>
     <string name="settings_diagnostics_clear">Vider le journal</string>
     <string name="settings_diagnostics_help">Les dernières erreurs réseau, outils et base de données. Aucun contenu de conversation n’y figure et rien n’est envoyé automatiquement.</string>
