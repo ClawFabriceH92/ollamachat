@@ -214,6 +214,8 @@
     <string name="backup_import_note">L’import ajoute les conversations aux tiennes, il n’efface jamais rien.</string>
 
     <string name="chat_load_older">Charger les messages précédents</string>
+    <string name="settings_connectivity">Tester la connectivité</string>
+    <string name="settings_connectivity_help">Interroge séparément le serveur Ollama et l’hôte des mises à jour. Un tunnel VPN casse l’un ou l’autre selon son routage, et ce test dit lequel.</string>
     <string name="settings_diagnostics">Partager le journal de diagnostic</string>
     <string name="settings_diagnostics_clear">Vider le journal</string>
     <string name="settings_diagnostics_help">Les dernières erreurs réseau, outils et base de données. Aucun contenu de conversation n’y figure et rien n’est envoyé automatiquement.</string>

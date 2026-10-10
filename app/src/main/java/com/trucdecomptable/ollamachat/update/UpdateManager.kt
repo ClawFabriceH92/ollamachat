@@ -69,29 +69,40 @@ object UpdateManager {
     @Volatile
     private var lastCheckAt = 0L
 
-    private const val MIN_INTERVAL_MS = 60 * 60_000L
-
     private fun check(skippedVersion: String, manual: Boolean) {
         if (job?.isActive == true) return
         val now = System.currentTimeMillis()
-        if (!manual && now - lastCheckAt < MIN_INTERVAL_MS) return
+        if (!UpdateSchedule.isDue(manual, lastCheckAt, now)) return
         lastCheckAt = now
         job = scope.launch {
-            val info = UpdateChecker.checkForUpdate()
             // Recorded either way: "the update does not happen" has to be
             // answerable from the diagnostic log instead of by guesswork.
-            _state.value = when {
-                info == null -> {
+            _state.value = when (val result = UpdateChecker.check()) {
+                is UpdateChecker.CheckResult.Available -> {
+                    val info = result.info
+                    if (info.version == skippedVersion) {
+                        DiagnosticLog.record("update", "version ${info.version} écartée par l'utilisateur")
+                        State.Idle
+                    } else {
+                        DiagnosticLog.record("update", "version ${info.version} disponible")
+                        State.Available(info.version, info.notes, info.apkUrl)
+                    }
+                }
+
+                UpdateChecker.CheckResult.UpToDate -> {
                     DiagnosticLog.record("update", "aucune version plus récente que ${BuildConfig.VERSION_NAME}")
                     if (manual) State.UpToDate(BuildConfig.VERSION_NAME) else State.Idle
                 }
-                info.version == skippedVersion -> {
-                    DiagnosticLog.record("update", "version ${info.version} écartée par l'utilisateur")
-                    State.Idle
-                }
-                else -> {
-                    DiagnosticLog.record("update", "version ${info.version} disponible")
-                    State.Available(info.version, info.notes, info.apkUrl)
+
+                is UpdateChecker.CheckResult.Unreachable -> {
+                    DiagnosticLog.record("update", "vérification impossible : ${result.reason}")
+                    // A check that never reached GitHub must not hold the hourly
+                    // slot. The network that blocked it is often gone minutes
+                    // later — a tunnel coming up or down — and the next launch
+                    // has to be allowed to try again instead of staying silent
+                    // for an hour on the strength of a failure.
+                    lastCheckAt = 0L
+                    if (manual) State.Failed(result.reason) else State.Idle
                 }
             }
         }

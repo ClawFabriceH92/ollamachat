@@ -172,10 +172,23 @@ jobs:
             gh release upload latest "$APK" --clobber && break
             sleep 10
           done
+          # Published after the APK so the manifest never advertises a build
+          # whose asset is not up yet. The updater reads this instead of the
+          # releases API: an asset download carries no per-IP hourly quota,
+          # and that quota is what made the check fail behind a shared VPN
+          # exit address, where strangers had already spent it.
+          printf '{"version":"%s","notes":"Build automatique — v%s","apk":"%s"}\n' \
+            "$VER" "$VER" \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/latest/app-release.apk" \
+            > "$RUNNER_TEMP/version.json"
+          for i in 1 2 3 4 5; do
+            gh release upload latest "$RUNNER_TEMP/version.json" --clobber && break
+            sleep 10
+          done
           # A rolling release accumulates assets; leaving an older APK behind
           # lets the in-app updater install a previous version.
           gh release view latest --json assets -q '.assets[].name' \
-            | grep -vx 'app-release.apk' \
+            | grep -vx -e 'app-release.apk' -e 'version.json' \
             | while read -r stale; do gh release delete-asset latest "$stale" -y || true; done
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
