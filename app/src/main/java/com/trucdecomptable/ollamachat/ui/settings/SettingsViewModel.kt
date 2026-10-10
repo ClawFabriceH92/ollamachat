@@ -15,6 +15,8 @@ import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
 import com.trucdecomptable.ollamachat.data.ollama.NetworkScanner
 import com.trucdecomptable.ollamachat.data.prefs.McpServer
 import com.trucdecomptable.ollamachat.data.repo.TurboProfile
+import com.trucdecomptable.ollamachat.util.ConnectivityProbe
+import com.trucdecomptable.ollamachat.util.DiagnosticLog
 import com.trucdecomptable.ollamachat.util.PinUtils
 import com.trucdecomptable.ollamachat.ui.chat.UiMessage
 import com.trucdecomptable.ollamachat.ui.chat.uiMessage
@@ -62,6 +64,8 @@ data class SettingsUiState(
     val backupMessage: UiMessage? = null,
     val pullingModel: String? = null,
     val pullProgress: Float = 0f,
+    val connectivityBusy: Boolean = false,
+    val connectivityReport: String? = null,
 )
 
 /** Transient (non-persisted) UI state merged into the settings snapshot. */
@@ -77,6 +81,8 @@ private data class Transient(
     val backupMessage: UiMessage? = null,
     val pullingModel: String? = null,
     val pullProgress: Float = 0f,
+    val connectivityBusy: Boolean = false,
+    val connectivityReport: String? = null,
 )
 
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
@@ -123,6 +129,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             backupMessage = tr.backupMessage,
             pullingModel = tr.pullingModel,
             pullProgress = tr.pullProgress,
+            connectivityBusy = tr.connectivityBusy,
+            connectivityReport = tr.connectivityReport,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
 
@@ -230,6 +238,31 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             }
         }
     }
+
+    /**
+     * Probes the two legs separately: the Ollama server and the update host.
+     *
+     * "It does not work" describes two opposite tunnel topologies, so the
+     * answer has to come from the device rather than from guessing which one
+     * the user is on.
+     */
+    fun runConnectivityProbe(context: Context) {
+        if (transient.value.connectivityBusy) return
+        viewModelScope.launch {
+            transient.update { it.copy(connectivityBusy = true, connectivityReport = null) }
+            val report = ConnectivityProbe.run(
+                context = context,
+                baseUrl = settings.baseUrl.first(),
+                client = container.ollamaClient,
+            )
+            val text = report.formatted()
+            // Kept in the log too, so it travels with the shared diagnostics.
+            DiagnosticLog.record("réseau", text.replace("\n", " | "))
+            transient.update { it.copy(connectivityBusy = false, connectivityReport = text) }
+        }
+    }
+
+    fun consumeConnectivityReport() = transient.update { it.copy(connectivityReport = null) }
 
     /** Scans the local network for Ollama servers and stores the results. */
     fun scanNetwork() {

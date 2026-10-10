@@ -212,6 +212,8 @@
     <string name="backup_import_note">Importing adds conversations to yours; it never erases anything.</string>
 
     <string name="chat_load_older">Load earlier messages</string>
+    <string name="settings_connectivity">Test connectivity</string>
+    <string name="settings_connectivity_help">Probes the Ollama server and the update host separately. A VPN tunnel breaks one or the other depending on how it routes, and this test says which.</string>
     <string name="settings_diagnostics">Share the diagnostic log</string>
     <string name="settings_diagnostics_clear">Clear the log</string>
     <string name="settings_diagnostics_help">The most recent network, tool and database errors. No conversation content is included and nothing is sent automatically.</string>

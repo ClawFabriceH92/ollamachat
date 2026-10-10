@@ -437,6 +437,19 @@ fun SettingsScreen(
             }
             Hint(stringResource(R.string.settings_backup_help))
 
+            OutlinedButton(
+                onClick = { vm.runConnectivityProbe(context) },
+                enabled = !state.connectivityBusy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (state.connectivityBusy) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(stringResource(R.string.settings_connectivity))
+            }
+            Hint(stringResource(R.string.settings_connectivity_help))
+
             TextButton(onClick = { shareDiagnostics(context) }) {
                 Text(stringResource(R.string.settings_diagnostics))
             }
@@ -466,6 +479,19 @@ fun SettingsScreen(
                 vm.consumePinMessage()
             },
             onConfirm = { old, new, confirm -> vm.changePin(old, new, confirm) },
+        )
+    }
+
+    state.connectivityReport?.let { report ->
+        AlertDialog(
+            onDismissRequest = { vm.consumeConnectivityReport() },
+            title = { Text(stringResource(R.string.settings_connectivity)) },
+            text = { Text(report, style = MaterialTheme.typography.bodySmall) },
+            confirmButton = {
+                TextButton(onClick = { vm.consumeConnectivityReport() }) {
+                    Text(stringResource(R.string.action_close))
+                }
+            },
         )
     }
 
