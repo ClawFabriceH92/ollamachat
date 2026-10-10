@@ -67,7 +67,7 @@ object UpdateManager {
 
     /** Last check, so resuming the app does not hammer the GitHub API. */
     @Volatile
-    private var lastCheckAt = 0L
+    private var lastCheckAt = UpdateSchedule.NEVER
 
     private fun check(skippedVersion: String, manual: Boolean) {
         if (job?.isActive == true) return
@@ -101,7 +101,7 @@ object UpdateManager {
                     // later — a tunnel coming up or down — and the next launch
                     // has to be allowed to try again instead of staying silent
                     // for an hour on the strength of a failure.
-                    lastCheckAt = 0L
+                    lastCheckAt = UpdateSchedule.NEVER
                     if (manual) State.Failed(result.reason) else State.Idle
                 }
             }

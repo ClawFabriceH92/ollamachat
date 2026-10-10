@@ -215,9 +215,21 @@ class UpdateScheduleTest {
 
     @Test
     fun `a failed check releases the slot immediately`() {
-        // The manager resets lastCheckAt to 0 when the check is Unreachable:
-        // the tunnel that blocked it is often gone minutes later, and the next
+        // The manager clears the timestamp when the check is Unreachable: the
+        // tunnel that blocked it is often gone minutes later, and the next
         // launch has to be allowed to try instead of staying mute for an hour.
-        assertTrue(UpdateSchedule.isDue(manual = false, lastCheckAt = 0L, now = 1L))
+        // Asserted with a small clock on purpose — that is what caught the
+        // release working only by accident of the epoch being far from zero.
+        assertTrue(
+            UpdateSchedule.isDue(manual = false, lastCheckAt = UpdateSchedule.NEVER, now = 1L)
+        )
+        // And with the wall clock the manager actually passes.
+        assertTrue(
+            UpdateSchedule.isDue(
+                manual = false,
+                lastCheckAt = UpdateSchedule.NEVER,
+                now = 1_760_000_000_000L,
+            )
+        )
     }
 }

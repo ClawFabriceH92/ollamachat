@@ -12,7 +12,15 @@ internal object UpdateSchedule {
 
     const val MIN_INTERVAL_MS = 60 * 60_000L
 
-    /** [lastCheckAt] of 0 means "nothing landed yet", so a check is due. */
+    /** No check has landed yet, or the last one failed and released the slot. */
+    const val NEVER = 0L
+
+    /**
+     * The [NEVER] branch is spelled out rather than left to arithmetic: with a
+     * wall clock, `now - 0` already exceeds any interval, so the released slot
+     * would work by accident of the epoch being far from zero instead of
+     * because the rule says so. A test with a small clock caught exactly that.
+     */
     fun isDue(manual: Boolean, lastCheckAt: Long, now: Long): Boolean =
-        manual || now - lastCheckAt >= MIN_INTERVAL_MS
+        manual || lastCheckAt == NEVER || now - lastCheckAt >= MIN_INTERVAL_MS
 }
