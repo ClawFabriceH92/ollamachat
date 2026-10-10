@@ -66,6 +66,7 @@ data class SettingsUiState(
     val pullProgress: Float = 0f,
     val connectivityBusy: Boolean = false,
     val connectivityReport: String? = null,
+    val scannedSubnets: List<String>? = null,
 )
 
 /** Transient (non-persisted) UI state merged into the settings snapshot. */
@@ -83,6 +84,7 @@ private data class Transient(
     val pullProgress: Float = 0f,
     val connectivityBusy: Boolean = false,
     val connectivityReport: String? = null,
+    val scannedSubnets: List<String>? = null,
 )
 
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
@@ -131,6 +133,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
             pullProgress = tr.pullProgress,
             connectivityBusy = tr.connectivityBusy,
             connectivityReport = tr.connectivityReport,
+            scannedSubnets = tr.scannedSubnets,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
 
@@ -269,11 +272,26 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         if (transient.value.scanning) return
         viewModelScope.launch {
             transient.update {
-                it.copy(scanning = true, scanResults = emptyList(), testResult = null, testOk = null)
+                it.copy(
+                    scanning = true,
+                    scanResults = emptyList(),
+                    scannedSubnets = null,
+                    testResult = null,
+                    testOk = null,
+                )
             }
             val outcome = NetworkScanner.scanForOllama()
+            // The swept subnets were computed and then dropped, so a scan that
+            // found nothing looked exactly like a scan that never ran. They say
+            // which networks the device believes it can reach, which is the
+            // whole question when a tunnel is involved.
             transient.update {
-                it.copy(scanning = false, scanResults = outcome.results, testOk = null)
+                it.copy(
+                    scanning = false,
+                    scanResults = outcome.results,
+                    scannedSubnets = outcome.scannedSubnets,
+                    testOk = null,
+                )
             }
             if (outcome.results.size == 1) applyScanResult(outcome.results.first())
         }

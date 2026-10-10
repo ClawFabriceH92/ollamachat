@@ -172,6 +172,12 @@ fun SettingsScreen(
                         .padding(vertical = 6.dp),
                 )
             }
+            state.scannedSubnets?.takeIf { state.scanResults.isEmpty() }?.let { subnets ->
+                Hint(
+                    if (subnets.isEmpty()) stringResource(R.string.scan_none_no_subnet)
+                    else stringResource(R.string.scan_none, subnets.joinToString(", "))
+                )
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = { vm.testConnection(state.baseUrl) }, enabled = !state.testing) {
                     if (state.testing) {

@@ -125,6 +125,8 @@
     <string name="settings_server_url_hint">http://192.168.1.50:11434</string>
     <string name="settings_scan">Détecter automatiquement un serveur Ollama</string>
     <string name="settings_scanning">Scan du réseau en cours…</string>
+    <string name="scan_none">Aucun serveur trouvé. Sous-réseaux balayés : %1$s. Si celui de ton serveur n’y figure pas, le réseau de l’appareil ne l’atteint pas — un tunnel VPN qui ne route pas le réseau local donne exactement cela.</string>
+    <string name="scan_none_no_subnet">Aucun serveur trouvé, et aucun sous-réseau à balayer : l’appareil ne voit aucun réseau local exploitable.</string>
     <string name="settings_test">Tester la connexion</string>
     <string name="settings_testing">Test…</string>
     <string name="settings_test_ok">Connexion établie</string>

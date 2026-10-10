@@ -123,6 +123,8 @@
     <string name="settings_server_url_hint">http://192.168.1.50:11434</string>
     <string name="settings_scan">Auto-detect an Ollama server</string>
     <string name="settings_scanning">Scanning the network…</string>
+    <string name="scan_none">No server found. Subnets swept: %1$s. If your server’s subnet is missing, the device cannot reach it — a VPN tunnel that does not route the local network looks exactly like this.</string>
+    <string name="scan_none_no_subnet">No server found, and no subnet to sweep: the device sees no usable local network.</string>
     <string name="settings_test">Test connection</string>
     <string name="settings_testing">Testing…</string>
     <string name="settings_test_ok">Connected</string>
