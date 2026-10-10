@@ -26,7 +26,12 @@ object ConnectivityProbe {
         val millis: Long,
     )
 
-    data class Report(val vpnActive: Boolean, val legs: List<Leg>) {
+    data class Report(
+        val vpnActive: Boolean,
+        val legs: List<Leg>,
+        /** What the device can reach, straight from the system. */
+        val networks: List<String> = emptyList(),
+    ) {
 
         val allOk: Boolean get() = legs.all { it.ok }
 
@@ -38,6 +43,11 @@ object ConnectivityProbe {
                 append(" — ")
                 append(leg.detail.ifBlank { if (leg.ok) "joignable" else "injoignable" })
                 appendLine(" (${leg.millis} ms)")
+            }
+            if (networks.isNotEmpty()) {
+                appendLine()
+                appendLine("Ce que l'appareil sait joindre :")
+                networks.forEach { appendLine("  $it") }
             }
             ConnectivityProbe.diagnosis(this@Report)?.let {
                 appendLine()
@@ -87,7 +97,11 @@ object ConnectivityProbe {
                 }
             },
         )
-        return Report(vpnActive = vpnActive(context), legs = legs)
+        return Report(
+            vpnActive = vpnActive(context),
+            legs = legs,
+            networks = describeRouting(context),
+        )
     }
 
     /** True when the active network is a tunnel. */
@@ -96,6 +110,51 @@ object ConnectivityProbe {
         val caps = cm?.activeNetwork?.let { cm.getNetworkCapabilities(it) }
         caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
     }.getOrDefault(false)
+
+    /**
+     * Every network the system knows, with its addresses and its routes.
+     *
+     * This is the one fact no amount of reasoning from here can supply. A
+     * tunnel carrying only a default route swallows LAN traffic and loses it
+     * at the far end; a tunnel with no route covering the LAN never carries
+     * that traffic at all. Both look identical from the app — ten seconds of
+     * silence — and they need opposite fixes.
+     *
+     * Everything is read through toString(): LinkAddress and RouteInfo print
+     * what we want, and going through their getters would pull in IpPrefix,
+     * which is API 27 while this app supports 26.
+     */
+    fun describeRouting(context: Context): List<String> = runCatching {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        val lines = mutableListOf<String>()
+        @Suppress("DEPRECATION")
+        val networks = cm?.allNetworks?.toList().orEmpty()
+        networks.forEach { network ->
+            val link = cm?.getLinkProperties(network) ?: return@forEach
+            val caps = cm.getNetworkCapabilities(network)
+            val kind = when {
+                caps == null -> "réseau"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "mobile"
+                else -> "réseau"
+            }
+            val addresses = link.linkAddresses
+                .map { it.toString() }
+                .filter { isIpv4(it) }
+            lines += "$kind (${link.interfaceName ?: "?"}) : " +
+                addresses.joinToString(", ").ifBlank { "—" }
+            link.routes.forEach { route ->
+                val text = route.toString()
+                if (!isIpv4(text)) return@forEach
+                lines += "    $text" + if (route.isDefaultRoute) "  (route par défaut)" else ""
+            }
+        }
+        lines.ifEmpty { listOf("Routage : aucune information") }
+    }.getOrElse { listOf("Routage : illisible (${it.javaClass.simpleName})") }
+
+    /** IPv6 is not what any of this is about, and its colons give it away. */
+    internal fun isIpv4(text: String): Boolean = !text.contains(':')
 
     private suspend fun timed(name: String, block: suspend () -> String): Leg {
         val start = System.currentTimeMillis()

@@ -69,6 +69,27 @@ class ConnectivityProbeTest {
     }
 
     @Test
+    fun `the routing lines travel with the report`() {
+        val base = report(vpn = true, serverOk = false, updateOk = true)
+        val text = base.copy(
+            networks = listOf(
+                "VPN (tun0) : 192.168.27.65/24",
+                "    0.0.0.0/0  (route par défaut)",
+                "mobile (rmnet0) : 10.84.1.7/30",
+            ),
+        ).formatted()
+        assertTrue(text, text.contains("Ce que l'appareil sait joindre"))
+        assertTrue(text, text.contains("192.168.27.65/24"))
+        assertTrue(text, text.contains("route par défaut"))
+    }
+
+    @Test
+    fun `ipv6 lines are left out, colons and all`() {
+        assertTrue(ConnectivityProbe.isIpv4("192.168.0.0/24 -> 0.0.0.0 wlan0"))
+        assertTrue(!ConnectivityProbe.isIpv4("fe80::/64 -> :: wlan0"))
+    }
+
+    @Test
     fun `allOk is false as soon as one leg fails`() {
         assertTrue(report(vpn = false, serverOk = true, updateOk = true).allOk)
         assertTrue(!report(vpn = false, serverOk = true, updateOk = false).allOk)
