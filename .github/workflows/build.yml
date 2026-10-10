@@ -37,6 +37,12 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default package set still asks for "tools", which
+          # Google has since removed from the SDK repository: sdkmanager exits
+          # 1 and the job dies before anything is compiled. Listing only what
+          # this build needs keeps the step independent of that default.
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -115,6 +121,12 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default package set still asks for "tools", which
+          # Google has since removed from the SDK repository: sdkmanager exits
+          # 1 and the job dies before anything is compiled. Listing only what
+          # this build needs keeps the step independent of that default.
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
 
       - name: Cache Gradle
         uses: actions/cache@v4
