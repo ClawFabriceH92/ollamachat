@@ -98,6 +98,7 @@
 
     <!-- Errors -->
     <string name="error_connection">Serveur injoignable — vérifie l’adresse et le réseau</string>
+    <string name="error_connect_timeout">Connexion impossible à %1$s — aucune réponse. Serveur éteint, ou réseau qui bloque le passage (VPN, pare-feu).</string>
     <string name="error_timeout">Le serveur met trop de temps à répondre</string>
     <string name="error_http">Le serveur a refusé la requête (%1$s)</string>
     <string name="error_server">Erreur du serveur : %1$s</string>

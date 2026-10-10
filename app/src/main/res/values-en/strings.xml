@@ -96,6 +96,7 @@
 
     <!-- Errors -->
     <string name="error_connection">Server unreachable — check the address and your network</string>
+    <string name="error_connect_timeout">Cannot connect to %1$s — no answer at all. Server down, or the network is blocking it (VPN, firewall).</string>
     <string name="error_timeout">The server is taking too long to answer</string>
     <string name="error_http">The server rejected the request (%1$s)</string>
     <string name="error_server">Server error: %1$s</string>
