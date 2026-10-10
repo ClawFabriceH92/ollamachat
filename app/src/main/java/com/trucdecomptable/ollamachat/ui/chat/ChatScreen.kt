@@ -102,11 +102,9 @@ import com.trucdecomptable.ollamachat.data.db.Memory
 import com.trucdecomptable.ollamachat.data.db.Message
 import com.trucdecomptable.ollamachat.data.db.images
 import com.trucdecomptable.ollamachat.data.ollama.ChatError
+import com.trucdecomptable.ollamachat.data.ollama.ChatErrorCode
 import com.trucdecomptable.ollamachat.data.tools.ApprovalDecision
 import com.trucdecomptable.ollamachat.data.tools.ApprovalRequest
-import com.trucdecomptable.ollamachat.data.ollama.ChatError
-import com.trucdecomptable.ollamachat.data.tools.ApprovalDecision
-import com.trucdecomptable.ollamachat.data.tools.ApprovalRequestCode
 import com.trucdecomptable.ollamachat.data.repo.EphemeralPolicy
 import com.trucdecomptable.ollamachat.ui.markdown.MarkdownText
 import kotlinx.coroutines.Dispatchers
