@@ -254,8 +254,9 @@ open class OllamaClient(
         onThinking: (String) -> Unit = {},
     ): ChatStreamResult = withContext(Dispatchers.IO) {
         val payload = buildChatPayload(model, messages, options, keepAlive, tools, stream = true, think = think)
+        val target = normalizeBaseUrl(baseUrl)
         val req = Request.Builder()
-            .url("${normalizeBaseUrl(baseUrl)}/api/chat")
+            .url("$target/api/chat")
             .post(payload.toString().toRequestBody(JSON.toMediaType()))
             .build()
 
@@ -267,8 +268,12 @@ open class OllamaClient(
 
         val text = StringBuilder()
         val reasoning = StringBuilder()
+        // Flipped the moment response headers arrive, which is what separates
+        // "never reached the server" from "the server is slow".
+        var responseStarted = false
         try {
             call.execute().use { resp ->
+                responseStarted = true
                 if (!resp.isSuccessful) {
                     val detail = resp.body?.string()?.let { extractError(it) }
                     return@withContext ChatStreamResult(
@@ -350,10 +355,18 @@ open class OllamaClient(
             if (call.isCanceled()) {
                 ChatStreamResult(text.toString(), thinking = reasoning.toString(), cancelled = true)
             } else {
-                ChatStreamResult(text.toString(), thinking = reasoning.toString(), error = classify(e))
+                ChatStreamResult(
+                    text.toString(),
+                    thinking = reasoning.toString(),
+                    error = classify(e, target, responseStarted),
+                )
             }
         } catch (e: Exception) {
-            ChatStreamResult(text.toString(), thinking = reasoning.toString(), error = classify(e))
+            ChatStreamResult(
+                text.toString(),
+                thinking = reasoning.toString(),
+                error = classify(e, target, responseStarted),
+            )
         } finally {
             cancelBridge?.dispose()
             activeCall.compareAndSet(call, null)
@@ -480,14 +493,33 @@ open class OllamaClient(
         ModelCapabilities()
     }
 
-    private fun classify(e: Exception): ChatError {
+    private fun classify(
+        e: Exception,
+        target: String? = null,
+        responseStarted: Boolean = true,
+    ): ChatError {
         DiagnosticLog.record("ollama", e)
-        return classifyCode(e)
+        return classifyCode(e, target, responseStarted)
     }
 
-    private fun classifyCode(e: Exception): ChatError = when (e) {
-        is SocketTimeoutException -> ChatError(ChatErrorCode.TIMEOUT)
-        is ConnectException, is UnknownHostException -> ChatError(ChatErrorCode.CONNECTION)
+    /**
+     * [responseStarted] is true once the server has sent response headers.
+     *
+     * A timeout before that is not a slow server: nothing answered at all.
+     * Reporting it as "too slow" sends the user looking at the model and its
+     * context size when the packets are in fact being dropped on the way —
+     * which is what a tunnel that routes outbound but has no return path
+     * looks like from here.
+     */
+    internal fun classifyCode(
+        e: Exception,
+        target: String? = null,
+        responseStarted: Boolean = true,
+    ): ChatError = when {
+        e is SocketTimeoutException && !responseStarted ->
+            ChatError(ChatErrorCode.CONNECT_TIMEOUT, target)
+        e is SocketTimeoutException -> ChatError(ChatErrorCode.TIMEOUT)
+        e is ConnectException || e is UnknownHostException -> ChatError(ChatErrorCode.CONNECTION)
         else -> ChatError(ChatErrorCode.UNKNOWN, e.message)
     }
 

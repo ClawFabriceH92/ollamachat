@@ -559,6 +559,8 @@ fun ChatScreen(
 /** Maps a data-layer error code to a localized message. */
 private fun errorText(context: Context, error: ChatError): String = when (error.code) {
     ChatErrorCode.CONNECTION -> context.getString(R.string.error_connection)
+    ChatErrorCode.CONNECT_TIMEOUT ->
+        context.getString(R.string.error_connect_timeout, error.detail.orEmpty())
     ChatErrorCode.TIMEOUT -> context.getString(R.string.error_timeout)
     ChatErrorCode.HTTP -> context.getString(R.string.error_http, error.detail.orEmpty())
     ChatErrorCode.SERVER -> context.getString(R.string.error_server, error.detail.orEmpty())
