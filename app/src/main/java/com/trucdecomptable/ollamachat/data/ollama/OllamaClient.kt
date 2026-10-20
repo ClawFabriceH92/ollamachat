@@ -451,6 +451,9 @@ open class OllamaClient(
     /** What [chatOnce] fails with when [cancelActiveStream] stopped it. */
     class Cancelled : IOException("Annulé")
 
+    /** What [chatOnce] fails with when its prompt and answer filled the window. */
+    class WindowFull(message: String) : IOException(message)
+
     /**
      * One chat completion returned whole (used for context compaction).
      *
@@ -492,6 +495,7 @@ open class OllamaClient(
                 var done = false
                 var doneReason: String? = null
                 var promptEval: Int? = null
+                var evalCount = 0
                 while (!call.isCanceled() && !source.exhausted()) {
                     val line = source.readUtf8Line() ?: break
                     if (line.isBlank()) continue
@@ -507,17 +511,21 @@ open class OllamaClient(
                         done = true
                         doneReason = json.optString("done_reason").ifBlank { null }
                         promptEval = if (json.has("prompt_eval_count")) json.optInt("prompt_eval_count") else null
+                        evalCount = json.optInt("eval_count", 0)
                         break
                     }
                 }
+                // What Ollama really had to fit: the prompt, then what it wrote.
+                // It drops the oldest messages without a word once they no
+                // longer fit, so a window filled to the brim is the sign.
                 val numCtx = (options["num_ctx"] as? Number)?.toInt()
-                val predict = (options["num_predict"] as? Number)?.toInt() ?: 0
-                val windowFull = promptEval != null && numCtx != null && promptEval + predict > numCtx
+                val windowFull = promptEval != null && numCtx != null &&
+                    (promptEval >= numCtx || promptEval + evalCount > numCtx)
                 when {
                     call.isCanceled() -> Result.failure(Cancelled())
                     !done -> Result.failure(IOException("Réponse interrompue"))
                     doneReason == "length" -> Result.failure(IOException("Réponse coupée par num_predict"))
-                    windowFull -> Result.failure(IOException("Entrée tronquée : $promptEval jetons pour num_ctx $numCtx"))
+                    windowFull -> Result.failure(WindowFull("Fenêtre pleine : $promptEval + $evalCount jetons pour num_ctx $numCtx"))
                     text.isBlank() -> Result.failure(IOException("Empty response"))
                     else -> Result.success(text.toString())
                 }

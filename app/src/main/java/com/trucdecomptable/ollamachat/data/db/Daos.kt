@@ -45,6 +45,10 @@ interface ConversationDao {
     @Query("SELECT * FROM conversations WHERE id = :id")
     suspend fun getById(id: Long): Conversation?
 
+    /** How many conversations answer with [model] as their own. */
+    @Query("SELECT COUNT(*) FROM conversations WHERE model = :model")
+    suspend fun countUsingModel(model: String): Int
+
     @Insert
     suspend fun insert(c: Conversation): Long
 

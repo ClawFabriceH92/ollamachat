@@ -73,6 +73,9 @@ class CalculatorTest {
         assertEquals(30.0, Calculator.evaluate("200*15%"), 1e-12)
         assertEquals(-0.05, Calculator.evaluate("-5%"), 1e-12)
         assertEquals(1200.0, Calculator.evaluate("1000+1000*20%"), 1e-9)
+        // The usual way to add VAT: both readings of "1+20%" give 1.2.
+        assertEquals(1200.0, Calculator.evaluate("1000*(1+20%)"), 1e-9)
+        assertEquals(950.0, Calculator.evaluate("1000*(1-5%)"), 1e-9)
     }
 
     @Test
@@ -80,6 +83,8 @@ class CalculatorTest {
         // 1200 to a person, 1000.2 to the parser.
         assertThrows(IllegalArgumentException::class.java) { Calculator.evaluate("1000+20%") }
         assertThrows(IllegalArgumentException::class.java) { Calculator.evaluate("1000-(5)%") }
+        // Parentheses around it change nothing.
+        assertThrows(IllegalArgumentException::class.java) { Calculator.evaluate("1000+(20%)") }
     }
 
     @Test

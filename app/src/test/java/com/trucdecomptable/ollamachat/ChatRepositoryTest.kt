@@ -69,8 +69,14 @@ class ChatRepositoryTest {
         var compactionThink: Boolean? = null
         var compactionResult: Result<String> = Result.success("Résumé des échanges précédents.")
         var capabilityCalls = 0
+        val warmUps = mutableListOf<Pair<String, String>>()
         var cancelled = false
         var onBeforeAnswer: (() -> Unit)? = null
+
+        override suspend fun warmUp(baseUrl: String, model: String, keepAlive: String, numCtx: Int?): Result<Unit> {
+            warmUps += model to keepAlive
+            return Result.success(Unit)
+        }
 
         override suspend fun modelCapabilities(baseUrl: String, model: String): Result<ModelCapabilities> {
             capabilityCalls++
@@ -950,6 +956,60 @@ class ChatRepositoryTest {
 
         assertTrue(result.cancelled)
         assertTrue("la réponse a démarré quand même", client.requests.isEmpty())
+    }
+
+    @Test
+    fun `a summary alone is not summarised again`() = runBlocking {
+        settings.setContextCompactEnabled(true)
+        val id = newConversation()
+        db.messageDao().insert(
+            Message(
+                conversationId = id,
+                role = "system",
+                content = ContextBudget.SUMMARY_HEADER + "r".repeat(20_000),
+                contentType = ContextBudget.CONTENT_SUMMARY,
+            )
+        )
+        val client = FakeClient(mutableListOf(ChatStreamResult("ok")))
+
+        send(repository(client), id)
+
+        // Nothing new to fold: it would only blur what the summary says.
+        assertEquals(0, client.compactionCalls)
+    }
+
+    @Test
+    fun `a question too long to sit next to a summary does not trigger one`() = runBlocking {
+        settings.setContextCompactEnabled(true)
+        val id = newConversation()
+        repeat(4) { i ->
+            db.messageDao().insert(
+                Message(conversationId = id, role = if (i % 2 == 0) "user" else "assistant", content = "x".repeat(2_000))
+            )
+        }
+        val client = FakeClient(mutableListOf(ChatStreamResult("ok")))
+
+        send(repository(client), id, "q".repeat(13_500))
+
+        // The summary could not go out with it: written for nothing.
+        assertEquals(0, client.compactionCalls)
+    }
+
+    @Test
+    fun `turbo is not unloaded from the settings while a conversation answers with it`() = runBlocking {
+        settings.setTurboModel("qwen3:8b")
+        val id = db.conversationDao().insert(
+            com.trucdecomptable.ollamachat.data.db.Conversation(title = "", model = "qwen3:8b")
+        )
+        val client = FakeClient(mutableListOf())
+        val repo = repository(client)
+
+        repo.releaseTurboModel(null)
+        assertTrue("déchargé sous une conversation qui s'en sert", client.warmUps.isEmpty())
+
+        db.conversationDao().deleteById(id)
+        repo.releaseTurboModel(null)
+        assertEquals(listOf("qwen3:8b" to "0"), client.warmUps.toList())
     }
 
     @Test

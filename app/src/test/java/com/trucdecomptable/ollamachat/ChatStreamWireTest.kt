@@ -106,7 +106,7 @@ class ChatStreamWireTest {
             MockResponse().setBody(
                 """
                 {"message":{"role":"assistant","content":"Résumé"},"done":false}
-                {"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":8000}
+                {"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":8100,"eval_count":200}
                 """.trimIndent()
             )
         )
@@ -115,7 +115,25 @@ class ChatStreamWireTest {
             url(), "qwen3", question,
             options = mapOf("num_ctx" to 8192, "num_predict" to 1024),
         )
-        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull() is OllamaClient.WindowFull)
+    }
+
+    @Test
+    fun `chatOnce accepts a summary that fitted, however large num_predict was`() = runBlocking {
+        server.enqueue(
+            MockResponse().setBody(
+                """
+                {"message":{"role":"assistant","content":"Résumé"},"done":false}
+                {"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":7300,"eval_count":600}
+                """.trimIndent()
+            )
+        )
+        // 7 300 + 600 fits in 8 192: nothing was dropped, whatever the cap.
+        val result = OllamaClient().chatOnce(
+            url(), "qwen3", question,
+            options = mapOf("num_ctx" to 8192, "num_predict" to 1024),
+        )
+        assertEquals("Résumé", result.getOrNull())
     }
 
     @Test

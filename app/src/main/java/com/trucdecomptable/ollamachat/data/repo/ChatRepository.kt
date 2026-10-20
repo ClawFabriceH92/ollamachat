@@ -110,6 +110,9 @@ class ChatRepository(
     /** The last failed compaction per conversation: how long the history was, and when. */
     private val compactionFailures = ConcurrentHashMap<Long, Pair<Int, Long>>()
 
+    /** By how much the next summary request is narrowed, per conversation. */
+    private val compactionShrink = ConcurrentHashMap<Long, Int>()
+
     /**
      * Who the repository asks before running a tool it did not write.
      *
@@ -528,6 +531,9 @@ class ChatRepository(
         val turboModel = settings.turboModel.first()
         val own = conversationId?.let { db.conversationDao().getById(it)?.model } ?: settings.model.first()
         if (baseUrl.isBlank() || turboModel.isBlank() || turboModel == own) return
+        // From the settings no conversation is known: one using the turbo
+        // model as its own may be open underneath, and would reload it.
+        if (conversationId == null && db.conversationDao().countUsingModel(turboModel) > 0) return
         client.warmUp(baseUrl, turboModel, keepAlive = "0")
             .onFailure { DiagnosticLog.record("préchauffage", it) }
     }
@@ -833,6 +839,13 @@ class ChatRepository(
         // on every message, each time a generation on a large model. Better
         // to say the window is too small.
         if (!ContextBudget.canCompact(numCtx, budget)) return Compaction.TOO_SMALL
+        // Nothing new to fold: a summary of the summary alone only degrades it.
+        if (plan.summarize.all { ContextBudget.isSummary(it) }) return Compaction.NONE
+        // A summary that could not go out next to what must go anyway (a very
+        // long question) would be written for nothing; the next, shorter
+        // message compacts usefully.
+        val reserve = ContextBudget.summaryReserve(predict)
+        if (plan.keep.sumOf { ContextBudget.tokens(it, imageTokens) } + reserve > budget) return Compaction.NONE
         // A failed summary is not retried on every message: on a large model
         // each attempt costs minutes before the answer even starts.
         compactionFailures[conversationId]?.let { (size, at) ->
@@ -843,9 +856,12 @@ class ChatRepository(
         // Asked for a length it can reach: an answer cut by num_predict is
         // refused, and a summary that runs on would be.
         val instruction = SUMMARY_INSTRUCTION + " Ne dépasse pas ${predict / 2} mots."
+        // Narrowed after Ollama reported the window full: the estimate ran
+        // short for this content, and the same slice would fail the same way.
+        val shrink = compactionShrink[conversationId] ?: 1
         val slice = ContextBudget.sliceToSummarize(
             plan.summarize,
-            ContextBudget.summaryInputBudget(numCtx, predict, instruction),
+            ContextBudget.summaryInputBudget(numCtx, predict, instruction) / shrink,
             imageTokens,
         )
         val summary = client.chatOnce(
@@ -859,8 +875,13 @@ class ChatRepository(
         ).map { stripThinking(it).trim() }
             .getOrElse { e ->
                 if (e is OllamaClient.Cancelled) return Compaction.CANCELLED
-                compactionFailures[conversationId] = history.size to System.currentTimeMillis()
                 DiagnosticLog.record("compaction", e)
+                if (e is OllamaClient.WindowFull && shrink < MAX_COMPACTION_SHRINK) {
+                    // Tried again at the next message, on half as much.
+                    compactionShrink[conversationId] = shrink * 2
+                } else {
+                    compactionFailures[conversationId] = history.size to System.currentTimeMillis()
+                }
                 return Compaction.FAILED
             }
         if (summary.isBlank()) {
@@ -885,6 +906,7 @@ class ChatRepository(
             )
         }
         compactionFailures.remove(conversationId)
+        compactionShrink.remove(conversationId)
         return Compaction.DONE
     }
 
@@ -1020,5 +1042,8 @@ class ChatRepository(
         /** A failed compaction is tried again once the history grew this much, or after this long. */
         private const val COMPACTION_RETRY_MESSAGES = 6
         private const val COMPACTION_RETRY_MS = 10 * 60_000L
+
+        /** A summary request is halved at most this far (to an eighth) before giving up for a while. */
+        private const val MAX_COMPACTION_SHRINK = 8
     }
 }

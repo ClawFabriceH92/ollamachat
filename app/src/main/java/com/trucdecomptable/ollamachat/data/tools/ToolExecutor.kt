@@ -189,9 +189,11 @@ object Calculator {
                 val start = pos
                 val rhs = parseTerm()
                 // "1000+20%" reads as 1200 to a person and as 1000.2 here:
-                // refused rather than answered silently with either.
-                val term = input.substring(start, pos)
-                if (term.endsWith('%') && term.none { it == '*' || it == '/' }) {
+                // refused rather than answered silently with either. Both
+                // readings agree when what precedes is 1, as in the usual
+                // "prix*(1+20%)", which stays accepted.
+                val term = unwrapped(input.substring(start, pos))
+                if (value != 1.0 && term.endsWith('%') && term.none { it == '*' || it == '/' }) {
                     throw IllegalArgumentException(
                         "Pourcentage ambigu : écris 1000*1.2 pour ajouter 20 %, ou 1000*20% pour 20 % de 1000"
                     )
@@ -199,6 +201,25 @@ object Calculator {
                 value = if (op == '+') value + rhs else value - rhs
             }
             return value
+        }
+
+        /** [term] without the parentheses that enclose all of it: "(20%)" is still "20%". */
+        private fun unwrapped(term: String): String {
+            var inner = term
+            while (inner.length >= 2 && inner.first() == '(' && closingOf(inner) == inner.lastIndex) {
+                inner = inner.substring(1, inner.lastIndex)
+            }
+            return inner
+        }
+
+        /** Index of the parenthesis closing the one at index 0, or -1. */
+        private fun closingOf(text: String): Int {
+            var depth = 0
+            text.forEachIndexed { i, c ->
+                if (c == '(') depth++
+                if (c == ')' && --depth == 0) return i
+            }
+            return -1
         }
 
         private fun parseTerm(): Double {
