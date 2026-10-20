@@ -4,9 +4,13 @@ import com.trucdecomptable.ollamachat.data.ollama.ToolDef
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.math.BigDecimal
+import java.math.MathContext
+import java.math.RoundingMode
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 
 /**
  * Executes the built-in tools exposed to the model. Each tool returns a
@@ -32,7 +36,8 @@ object ToolExecutor {
         ),
         ToolDef(
             name = "calculate",
-            description = "Calcule une expression arithmétique (+, -, *, /, ^, parenthèses).",
+            description = "Calcule une expression arithmétique : + - * / ^ (puissance), parenthèses, " +
+                "% en suffixe (15% = 0.15). Point décimal, sans séparateur de milliers : 1234.56.",
             parametersJson = """{"type":"object","properties":{"expression":{"type":"string","description":"Expression arithmétique"}},"required":["expression"]}""",
         ),
         ToolDef(
@@ -101,8 +106,7 @@ object ToolExecutor {
                     ).format(Date())
                     "calculate" -> {
                         val expr = args.optString("expression", "").trim()
-                        val result = Calculator.evaluate(expr)
-                        "$expr = $result"
+                        "$expr = ${Calculator.format(Calculator.evaluate(expr))}"
                     }
                     "get_weather" -> {
                         val city = args.optString("city", "")
@@ -119,19 +123,55 @@ object ToolExecutor {
 /** Small safe arithmetic evaluator (no eval / reflection). */
 object Calculator {
 
+    /**
+     * The raw value, unrounded. It used to be rounded to three decimals here,
+     * which turned a monthly rate such as 1/3000 into 0, and through
+     * Math.round, which saturates past 9.2e15.
+     */
     fun evaluate(expression: String): Double {
-        val tokens = expression.replace(" ", "")
-        if (tokens.isEmpty() || !tokens.all { it.isDigit() || "+-*/^().".contains(it) }) {
+        val tokens = normalize(expression)
+        if (tokens.isEmpty() || !tokens.all { it.isDigit() || "+-*/^().%".contains(it) }) {
             throw IllegalArgumentException("Expression invalide")
         }
         val parser = Parser(tokens)
         val value = parser.parseExpression()
         if (!parser.atEnd()) throw IllegalArgumentException("Expression invalide")
         if (value.isNaN() || value.isInfinite()) throw IllegalArgumentException("Résultat non défini")
-        return round3(value)
+        return value
     }
 
-    private fun round3(v: Double): Double = Math.round(v * 1000.0) / 1000.0
+    /**
+     * Fifteen significant digits, what a double holds exactly, written out in
+     * full: "$value" printed 12345678.9 as 1.23456789E7, and a model copies
+     * what it reads.
+     */
+    fun format(value: Double): String {
+        if (value == 0.0) return "0"
+        val text = BigDecimal.valueOf(value)
+            .round(MathContext(15, RoundingMode.HALF_EVEN))
+            .stripTrailingZeros()
+            .toPlainString()
+        return if (abs(value) >= 1e15) "$text (au-delà de 15 chiffres, précision non garantie)" else text
+    }
+
+    /**
+     * Spaces of every kind go, and a decimal comma becomes a point when it
+     * cannot be anything else. "1,234" stays refused: as a French decimal it
+     * is 1.234, as an English thousands separator 1234, and guessing wrong
+     * would answer silently with a figure a thousand times off.
+     */
+    private fun normalize(expression: String): String {
+        val compact = expression.filterNot { it.isWhitespace() || it == '\u00A0' || it == '\u202F' }
+        if (',' !in compact) return compact
+        val ambiguous = '.' in compact || THOUSANDS.containsMatchIn(compact)
+        if (ambiguous) {
+            throw IllegalArgumentException("Utilise le point décimal, sans séparateur de milliers : 1234.56")
+        }
+        return compact.replace(',', '.')
+    }
+
+    /** A comma followed by exactly three digits reads as a thousands separator. */
+    private val THOUSANDS = Regex(",\\d{3}(?!\\d)")
 
     private class Parser(private val input: String) {
         private var pos = 0
@@ -146,10 +186,40 @@ object Calculator {
             var value = parseTerm()
             while (peek() == '+' || peek() == '-') {
                 val op = consume()
+                val start = pos
                 val rhs = parseTerm()
+                // "1000+20%" reads as 1200 to a person and as 1000.2 here:
+                // refused rather than answered silently with either. Both
+                // readings agree when what precedes is 1, as in the usual
+                // "prix*(1+20%)", which stays accepted.
+                val term = unwrapped(input.substring(start, pos))
+                if (value != 1.0 && term.endsWith('%') && term.none { it == '*' || it == '/' }) {
+                    throw IllegalArgumentException(
+                        "Pourcentage ambigu : écris 1000*1.2 pour ajouter 20 %, ou 1000*20% pour 20 % de 1000"
+                    )
+                }
                 value = if (op == '+') value + rhs else value - rhs
             }
             return value
+        }
+
+        /** [term] without the parentheses that enclose all of it: "(20%)" is still "20%". */
+        private fun unwrapped(term: String): String {
+            var inner = term
+            while (inner.length >= 2 && inner.first() == '(' && closingOf(inner) == inner.lastIndex) {
+                inner = inner.substring(1, inner.lastIndex)
+            }
+            return inner
+        }
+
+        /** Index of the parenthesis closing the one at index 0, or -1. */
+        private fun closingOf(text: String): Int {
+            var depth = 0
+            text.forEachIndexed { i, c ->
+                if (c == '(') depth++
+                if (c == ')' && --depth == 0) return i
+            }
+            return -1
         }
 
         private fun parseTerm(): Double {
@@ -174,7 +244,12 @@ object Calculator {
         }
 
         private fun parsePower(): Double {
-            val base = parsePrimary()
+            var base = parsePrimary()
+            // A percentage is a hundredth: 15% is 0.15, 200*15% is 30.
+            while (peek() == '%') {
+                consume()
+                base /= 100.0
+            }
             if (peek() == '^') {
                 consume()
                 val exp = parseFactor()

@@ -9,10 +9,14 @@ import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.net.SocketTimeoutException
 
 /**
  * What a fetch the model asked for may not reach. The check runs on the
@@ -95,6 +99,30 @@ class UrlFetcherTest {
         val result = UrlFetcher.fetch(server.url("/").toString(), allowPrivate = true)
 
         assertTrue(result.getOrNull().orEmpty().contains("Contenu de test"))
+    }
+
+    @Test
+    fun `a model-chosen fetch opens no connection to the lan, whatever the address form`() {
+        // OkHttp takes digits and dots for an address and parses "127.1" or
+        // "2130706433" as 127.0.0.1. Not even a connection may reach the LAN:
+        // whether one is accepted would tell which ports are open.
+        ServerSocket(0, 50, InetAddress.getByName("127.0.0.1")).use { listener ->
+            listener.soTimeout = 500
+            runBlocking {
+                listOf("127.1", "2130706433", "127.0.0.1").forEach { host ->
+                    val result = UrlFetcher.fetch("http://$host:${listener.localPort}/")
+                    assertTrue("$host : ${result.exceptionOrNull()}", result.exceptionOrNull() is UrlFetcher.PrivateAddressBlocked)
+                }
+            }
+            assertThrows(SocketTimeoutException::class.java) { listener.accept() }
+        }
+    }
+
+    @Test
+    fun `the socket itself refuses a private address`() {
+        assertThrows(UrlFetcher.PrivateAddressBlocked::class.java) {
+            UrlFetcher.PublicOnlySocketFactory.createSocket().connect(InetSocketAddress("127.0.0.1", 9))
+        }
     }
 
     @Test

@@ -124,9 +124,12 @@ object ToolPolicy {
     fun searchResultLine(index: Int, title: String, url: String, snippet: String): String =
         "$index. ${oneLine(title)} — ${url.trim()}\n   ${oneLine(snippet)}"
 
-    private fun oneLine(text: String) = text.replace(Regex("\\s+"), " ").trim()
+    /** Every kind of space and control character, line and paragraph separators included. */
+    private fun oneLine(text: String) = text.replace(Regex("[\\s\\p{Z}\\p{Cc}]+"), " ").trim()
 
-    private val RESULT_LINE = Regex("""^\d+\. .* — (https?://\S+)$""", RegexOption.MULTILINE)
+    /** Only "\n" ends a line: U+0085, U+2028 and the like would let a title start one. */
+    private val RESULT_LINE =
+        Regex("""^\d+\. .* — (https?://\S+)$""", setOf(RegexOption.MULTILINE, RegexOption.UNIX_LINES))
 
     /**
      * The result addresses of a block written with [searchResultLine], and

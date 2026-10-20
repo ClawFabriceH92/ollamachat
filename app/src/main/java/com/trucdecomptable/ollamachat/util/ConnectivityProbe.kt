@@ -94,10 +94,7 @@ object ConnectivityProbe {
         if (!server.ok) {
             // A refusal came back from the server's machine: the way there and
             // back works, whatever the routes say.
-            if (server.reached && server.detail.startsWith("HTTP ")) {
-                return "Un serveur web répond à cette adresse (${server.detail}) mais ce n'est pas " +
-                    "l'API d'Ollama : vérifie le port (11434 par défaut) et l'adresse."
-            }
+            if (server.reached && server.detail.startsWith("HTTP ")) return httpVerdict(server.detail)
             if (server.reached) {
                 return "Le serveur répond mais refuse la connexion : Ollama ne " +
                     "tourne pas, n'écoute que sur 127.0.0.1 (règle OLLAMA_HOST=0.0.0.0), ou un " +
@@ -146,6 +143,19 @@ object ConnectivityProbe {
                     "Internet est coupé ou filtré."
         }
     }
+
+    /** A web server answered with an error: what that error says about Ollama. */
+    private fun httpVerdict(detail: String): String =
+        when (detail.removePrefix("HTTP ").trim().toIntOrNull()) {
+            404, 405 -> "Un serveur web répond à cette adresse ($detail) mais ce n'est pas l'API " +
+                "d'Ollama : vérifie le port (11434 par défaut) et l'adresse."
+            502, 503, 504 -> "Un proxy répond ($detail) mais Ollama derrière lui ne répond pas : il est " +
+                "arrêté, ou le proxy vise la mauvaise adresse."
+            401, 403 -> "L'accès est refusé ($detail) : authentification du proxy, ou réglage " +
+                "OLLAMA_ORIGINS / OLLAMA_HOST du serveur."
+            else -> "Le serveur répond par une erreur ($detail) : le réseau passe, c'est le service " +
+                "à cette adresse qui refuse."
+        }
 
     internal const val SERVER = "Serveur Ollama"
     internal const val UPDATE = "Mise à jour (github.com)"

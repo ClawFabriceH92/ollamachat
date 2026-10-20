@@ -1,23 +1,29 @@
 package com.trucdecomptable.ollamachat.data.repo
 
-import com.trucdecomptable.ollamachat.data.db.Message
-
 /**
  * The overrides applied while turbo mode is on.
  *
  * Turbo does not rewrite the user's settings — it is a layer applied when the
  * request is built, so switching it off restores exactly what was configured.
  *
- * The values target the four things that actually cost time before the first
- * token appears:
+ * The values target what actually costs time before the first token appears:
  *  - the model having been unloaded (keep_alive),
  *  - compaction running a whole generation first,
  *  - the tool array inflating the prompt and buying a decision round-trip,
- *  - the prompt itself being long (history, memories, num_ctx).
+ *  - reasoning before answering.
+ *
+ * The context window is left alone for the conversation's own model: Ollama
+ * reloads a model entirely when num_ctx changes, so a smaller window made
+ * every switch between turbo and normal cost a full load of a 27B model, for
+ * no gain on the first token. The history sent is chosen by budget, like
+ * outside turbo, which keeps it a stable prefix the server can reuse.
  */
 object TurboProfile {
 
-    /** Smaller window: prompt evaluation is linear in what you send. */
+    /**
+     * Window of a turbo model distinct from the conversation's: it is loaded
+     * for turbo only, so a smaller window costs no reload and saves memory.
+     */
     const val NUM_CTX = 4096
 
     /** Answers stay short; this caps the tail, not the first token. */
@@ -26,16 +32,15 @@ object TurboProfile {
     /** Keeps the model resident so the next message skips the load entirely. */
     const val KEEP_ALIVE = "30m"
 
-    /** Recent turns kept verbatim; everything older is dropped for this request. */
-    const val HISTORY_MESSAGES = 6
-
     /** Fewer long-term facts injected into the system prompt. */
     const val MEMORIES = 3
 
-    /**
-     * Keeps only the most recent messages. The message being answered is the
-     * last one, so it always survives.
-     */
-    fun trimHistory(history: List<Message>): List<Message> =
-        if (history.size <= HISTORY_MESSAGES) history else history.takeLast(HISTORY_MESSAGES)
+    /** The model a turn runs on: the turbo model when one is set, else the conversation's. */
+    fun model(turbo: Boolean, turboModel: String, conversationModel: String): String =
+        if (turbo) turboModel.ifBlank { conversationModel } else conversationModel
+
+    /** num_ctx for that model: reduced only for a distinct turbo model. */
+    fun numCtx(turbo: Boolean, turboModel: String, conversationModel: String, configured: Int): Int =
+        if (turbo && turboModel.isNotBlank() && turboModel != conversationModel) minOf(configured, NUM_CTX)
+        else configured
 }

@@ -114,17 +114,17 @@ open class OllamaClient(
      * True when anything at all answers at [target], an HTTP error included;
      * null when Stop interrupted the check. Registered as the active call, so
      * Stop reaches it like the answer it stands for, and kept short.
+     *
+     * Stop is recognised by the call having been taken out of the register,
+     * not by isCanceled(): an expired call timeout cancels the call as well,
+     * and a dead tunnel, the very thing checked for, read as a Stop.
      */
     private suspend fun answers(target: String): Boolean? = withContext(Dispatchers.IO) {
         val req = Request.Builder().url("$target/api/version").get().build()
         val check = http.newBuilder().callTimeout(5, TimeUnit.SECONDS).build().newCall(req)
         activeCall.set(check)
-        try {
-            val answered = runCatching { check.execute().use { true } }.getOrDefault(false)
-            if (check.isCanceled()) null else answered
-        } finally {
-            activeCall.compareAndSet(check, null)
-        }
+        val answered = runCatching { check.execute().use { true } }.getOrDefault(false)
+        if (activeCall.compareAndSet(check, null)) answered else null
     }
 
     /** List models installed on the server. */
@@ -172,16 +172,27 @@ open class OllamaClient(
      *
      * A model that has been evicted costs several seconds before the first
      * token of the next message; warming it up when a conversation opens moves
-     * that wait out of the user's way. Failures are irrelevant — this is an
-     * optimisation, not a step.
+     * that wait out of the user's way.
+     *
+     * [numCtx] must be the window the chat will ask for: Ollama loads a model
+     * for one num_ctx, and a request with another reloads it whole. Sent
+     * without it, the warm-up loaded the Modelfile's window (128k for a
+     * "-128k" tag), and the first message then paid a second full load.
+     * A keep_alive of "0" unloads the model instead.
      */
-    open suspend fun warmUp(baseUrl: String, model: String, keepAlive: String): Result<Unit> =
+    open suspend fun warmUp(
+        baseUrl: String,
+        model: String,
+        keepAlive: String,
+        numCtx: Int? = null,
+    ): Result<Unit> =
         withContext(Dispatchers.IO) {
             try {
                 // An empty prompt loads the model without generating anything.
                 val payload = JSONObject()
                     .put("model", model)
                     .put("keep_alive", keepAlive)
+                    .apply { numCtx?.let { put("options", JSONObject().put("num_ctx", it)) } }
                     .toString()
                 val req = Request.Builder()
                     .url("${normalizeBaseUrl(baseUrl)}/api/generate")
@@ -343,6 +354,7 @@ open class OllamaClient(
                 var evalCount: Int? = null
                 var evalDurationNs: Long? = null
                 var promptEvalCount: Int? = null
+                var doneReason: String? = null
 
                 while (isActive && !call.isCanceled() && !source.exhausted()) {
                     val line = source.readUtf8Line() ?: break
@@ -380,6 +392,7 @@ open class OllamaClient(
                         evalDurationNs = if (json.has("eval_duration")) json.optLong("eval_duration") else null
                         promptEvalCount =
                             if (json.has("prompt_eval_count")) json.optInt("prompt_eval_count") else null
+                        doneReason = json.optString("done_reason").ifBlank { null }
                         break
                     }
                 }
@@ -404,6 +417,7 @@ open class OllamaClient(
                     tokPerSec = tps,
                     evalCount = count,
                     promptEvalCount = promptEvalCount,
+                    truncated = doneReason == "length",
                 )
             }
         } catch (e: IOException) {
@@ -434,9 +448,23 @@ open class OllamaClient(
         }
     }
 
+    /** What [chatOnce] fails with when [cancelActiveStream] stopped it. */
+    class Cancelled : IOException("Annulé")
+
+    /** What [chatOnce] fails with when its prompt and answer filled the window. */
+    class WindowFull(message: String) : IOException(message)
+
     /**
-     * Single non-streaming chat completion (used for context compaction).
-     * Returns the full assistant text.
+     * One chat completion returned whole (used for context compaction).
+     *
+     * Streamed underneath: every line re-arms the read timeout, where a
+     * single response had to arrive whole within it, which a 27B model
+     * summarising a long history does not always do. Registered as the
+     * active call, so Stop interrupts it like an answer; it then fails with
+     * [Cancelled]. An answer cut by num_predict is a failure, not a result:
+     * a truncated summary would hide messages it never covered. So is a
+     * prompt that filled the window: Ollama makes room by dropping the oldest
+     * messages without a word, and those would be hidden unread.
      */
     open suspend fun chatOnce(
         baseUrl: String,
@@ -447,25 +475,66 @@ open class OllamaClient(
         tools: List<ToolDef> = emptyList(),
         think: Boolean? = null,
     ): Result<String> = withContext(Dispatchers.IO) {
+        val payload = buildChatPayload(model, messages, options, keepAlive, tools, stream = true, think = think)
+        val req = Request.Builder()
+            .url("${normalizeBaseUrl(baseUrl)}/api/chat")
+            .post(payload.toString().toRequestBody(JSON.toMediaType()))
+            .build()
+        val call = streamHttp.newCall(req)
+        activeCall.set(call)
+        val cancelBridge = currentCoroutineContext()[Job]?.invokeOnCompletion { call.cancel() }
         try {
-            val payload = buildChatPayload(model, messages, options, keepAlive, tools, stream = false, think = think)
-            val req = Request.Builder()
-                .url("${normalizeBaseUrl(baseUrl)}/api/chat")
-                .post(payload.toString().toRequestBody(JSON.toMediaType()))
-                .build()
-            // Summarizing a long history can take a while: use the streaming
-            // client's generous read timeout rather than the 20 s call budget.
-            streamHttp.newCall(req).execute().use { resp ->
+            call.execute().use { resp ->
                 if (!resp.isSuccessful) {
-                    return@withContext Result.failure(IOException("HTTP ${resp.code}"))
+                    val detail = resp.body?.string()?.let { extractError(it) }
+                    return@withContext Result.failure(IOException(detail ?: "HTTP ${resp.code}"))
                 }
-                val json = JSONObject(resp.body?.string() ?: "{}")
-                val text = json.optJSONObject("message")?.optString("content", "").orEmpty()
-                if (text.isBlank()) Result.failure(IOException("Empty response"))
-                else Result.success(text)
+                val source = resp.body?.source()
+                    ?: return@withContext Result.failure(IOException("Empty response"))
+                val text = StringBuilder()
+                var done = false
+                var doneReason: String? = null
+                var promptEval: Int? = null
+                var evalCount = 0
+                while (!call.isCanceled() && !source.exhausted()) {
+                    val line = source.readUtf8Line() ?: break
+                    if (line.isBlank()) continue
+                    val json = try {
+                        JSONObject(line)
+                    } catch (_: Exception) {
+                        continue
+                    }
+                    val chunk = parseChunk(json)
+                    chunk.error?.let { return@withContext Result.failure(IOException(it)) }
+                    text.append(chunk.content)
+                    if (chunk.done) {
+                        done = true
+                        doneReason = json.optString("done_reason").ifBlank { null }
+                        promptEval = if (json.has("prompt_eval_count")) json.optInt("prompt_eval_count") else null
+                        evalCount = json.optInt("eval_count", 0)
+                        break
+                    }
+                }
+                // What Ollama really had to fit: the prompt, then what it wrote.
+                // It drops the oldest messages without a word once they no
+                // longer fit, so a window filled to the brim is the sign.
+                val numCtx = (options["num_ctx"] as? Number)?.toInt()
+                val windowFull = promptEval != null && numCtx != null &&
+                    (promptEval >= numCtx || promptEval + evalCount > numCtx)
+                when {
+                    call.isCanceled() -> Result.failure(Cancelled())
+                    !done -> Result.failure(IOException("Réponse interrompue"))
+                    doneReason == "length" -> Result.failure(IOException("Réponse coupée par num_predict"))
+                    windowFull -> Result.failure(WindowFull("Fenêtre pleine : $promptEval + $evalCount jetons pour num_ctx $numCtx"))
+                    text.isBlank() -> Result.failure(IOException("Empty response"))
+                    else -> Result.success(text.toString())
+                }
             }
         } catch (e: Exception) {
-            Result.failure(e)
+            Result.failure(if (call.isCanceled()) Cancelled() else e)
+        } finally {
+            cancelBridge?.dispose()
+            activeCall.compareAndSet(call, null)
         }
     }
 
@@ -541,17 +610,21 @@ open class OllamaClient(
         JSONObject()
     }
 
-    internal fun parseCapabilities(body: String): ModelCapabilities = try {
+    /**
+     * Throws on a body that is not JSON: reported as a success, "no tools, no
+     * vision" was cached until the app restarted. A server too old to list
+     * capabilities gives [ModelCapabilities.known] false.
+     */
+    internal fun parseCapabilities(body: String): ModelCapabilities {
         val json = JSONObject(body)
-        val arr = json.optJSONArray("capabilities") ?: JSONArray()
-        val names = (0 until arr.length()).map { arr.optString(it, "").lowercase() }
-        ModelCapabilities(
+        val arr = json.optJSONArray("capabilities")
+        val names = if (arr == null) emptyList() else (0 until arr.length()).map { arr.optString(it, "").lowercase() }
+        return ModelCapabilities(
             vision = names.contains("vision"),
             tools = names.contains("tools"),
             thinking = names.contains("thinking"),
+            known = arr != null,
         )
-    } catch (_: Exception) {
-        ModelCapabilities()
     }
 
     private fun classify(

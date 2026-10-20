@@ -9,8 +9,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.Proxy
+import java.net.Socket
+import java.net.SocketAddress
+import javax.net.SocketFactory
 import java.util.concurrent.TimeUnit
 
 /**
@@ -71,10 +75,15 @@ object UrlFetcher {
      * A client that refuses, before connecting, a name resolving into a
      * private network (DNS rebinding included: the check runs on every
      * resolution), except [privateHost]. It follows no redirect by itself.
+     *
+     * Without a [privateHost], its sockets refuse a private address too: the
+     * one check that holds whatever wrote or resolved the address, an IPv4
+     * literal in a form nobody thought of ("3232235777", "127.1") included.
      */
     private fun guardedClient(privateHost: String?): OkHttpClient = http.newBuilder()
         .followRedirects(false)
         .followSslRedirects(false)
+        .apply { if (privateHost == null) socketFactory(PublicOnlySocketFactory) }
         .dns(object : Dns {
             override fun lookup(hostname: String): List<InetAddress> {
                 val addresses = dns.lookup(hostname)
@@ -86,18 +95,49 @@ object UrlFetcher {
         })
         .build()
 
-    /** An IP literal never reaches the resolver: checked here, before connecting. */
+    /**
+     * An IP literal never reaches the resolver: checked here, before
+     * connecting. "Literal" by OkHttp's own rule, digits and dots, so the
+     * shorthand forms it parses ("10.1", "3232235777") are checked too.
+     */
     private fun checkLiteral(host: String, privateHost: String?) {
         if (host == privateHost || !isIpLiteral(host)) return
-        // A literal is parsed, not looked up.
+        // Parsed the way OkHttp will parse it, not looked up.
         val address = InetAddress.getByName(host)
         if (isPrivate(address.address) || onAttachedNetwork(address)) throw PrivateAddressBlocked(host)
     }
 
     private fun isIpLiteral(host: String): Boolean =
-        host.contains(':') || IPV4.matches(host)
+        host.contains(':') || host.all { it.isDigit() || it == '.' }
 
-    private val IPV4 = Regex("""\d{1,3}(\.\d{1,3}){3}""")
+    /** Sockets that will not connect into a private network, the last word before any packet leaves. */
+    internal object PublicOnlySocketFactory : SocketFactory() {
+        override fun createSocket(): Socket = PublicOnlySocket()
+        override fun createSocket(host: String, port: Int): Socket =
+            PublicOnlySocket().apply { connect(InetSocketAddress(host, port)) }
+        override fun createSocket(host: String, port: Int, localHost: InetAddress?, localPort: Int): Socket =
+            PublicOnlySocket().apply {
+                bind(InetSocketAddress(localHost, localPort))
+                connect(InetSocketAddress(host, port))
+            }
+        override fun createSocket(host: InetAddress, port: Int): Socket =
+            PublicOnlySocket().apply { connect(InetSocketAddress(host, port)) }
+        override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress?, localPort: Int): Socket =
+            PublicOnlySocket().apply {
+                bind(InetSocketAddress(localAddress, localPort))
+                connect(InetSocketAddress(address, port))
+            }
+    }
+
+    private class PublicOnlySocket : Socket() {
+        override fun connect(endpoint: SocketAddress?, timeout: Int) {
+            val address = (endpoint as? InetSocketAddress)?.address
+            if (address == null || isPrivate(address.address) || onAttachedNetwork(address)) {
+                throw PrivateAddressBlocked(address?.hostAddress ?: endpoint.toString())
+            }
+            super.connect(endpoint, timeout)
+        }
+    }
 
     /**
      * Reads a page.
@@ -274,7 +314,10 @@ object UrlFetcher {
                 .header("User-Agent", "OllamaChat/1.0 (Android)")
                 .get()
                 .build()
-            http.newCall(req).execute().use { resp ->
+            // Guarded like a direct read: the reader is chosen by nobody here,
+            // but its name still resolves through the local network's DNS,
+            // and a redirect from it is not followed.
+            guardedClient(privateHost = null).newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return null
                 val body = resp.body?.string() ?: return null
                 val marker = "Markdown Content:"

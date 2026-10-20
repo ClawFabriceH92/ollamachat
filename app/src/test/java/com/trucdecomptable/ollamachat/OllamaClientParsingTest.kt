@@ -9,6 +9,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -68,9 +69,18 @@ class OllamaClientParsingTest {
         assertTrue(caps.vision)
         assertFalse(caps.thinking)
 
+        assertTrue(caps.known)
+
+        // A server too old to list them: unknown, not "none".
         val none = client.parseCapabilities("""{}""")
         assertFalse(none.tools)
         assertFalse(none.vision)
+        assertFalse(none.known)
+    }
+
+    @Test
+    fun `a capability answer that is not JSON is an error, not an empty list`() {
+        assertThrows(org.json.JSONException::class.java) { client.parseCapabilities("<html>proxy</html>") }
     }
 
     @Test
