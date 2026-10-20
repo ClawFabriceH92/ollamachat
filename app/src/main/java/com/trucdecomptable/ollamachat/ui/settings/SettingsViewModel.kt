@@ -14,6 +14,7 @@ import com.trucdecomptable.ollamachat.data.mcp.McpClient
 import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
 import com.trucdecomptable.ollamachat.data.ollama.NetworkScanner
 import com.trucdecomptable.ollamachat.data.prefs.McpServer
+import com.trucdecomptable.ollamachat.data.tools.ToolPolicy
 import com.trucdecomptable.ollamachat.data.repo.TurboProfile
 import com.trucdecomptable.ollamachat.util.ConnectivityProbe
 import com.trucdecomptable.ollamachat.util.DiagnosticLog
@@ -203,7 +204,12 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         val u = url.trim()
         if (n.isEmpty() || u.isEmpty()) return
         viewModelScope.launch {
-            settings.setMcpServers(settings.mcpServers.first() + McpServer(n, u))
+            val servers = settings.mcpServers.first()
+            if (ToolPolicy.mcpNameClashes(n, servers.map { it.name })) {
+                transient.update { it.copy(backupMessage = UiMessage(R.string.settings_mcp_name_clash)) }
+                return@launch
+            }
+            settings.setMcpServers(servers + McpServer(n, u))
             // Sessions and tool lists are cached per server: a changed list
             // must not keep answering from the old one.
             McpClient.invalidate()

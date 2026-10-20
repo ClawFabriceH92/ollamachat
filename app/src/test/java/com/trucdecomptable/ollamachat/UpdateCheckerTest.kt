@@ -252,11 +252,21 @@ class UpdateFailureVerdictTest {
     fun `a network failure wins and means nothing answered`() {
         val v = UpdateChecker.failureVerdict(missing, offline)
         assertTrue(v.reason, v.reason.contains("DNS"))
-        // The manifest host did answer, with a 404: something replied.
-        assertTrue(v.answered)
+        // The reason is a network failure: saying GitHub answered would
+        // contradict it ("GitHub a répondu : DNS…").
+        assertFalse(v.answered)
 
         val both = UpdateChecker.failureVerdict(offline, offline)
         assertFalse(both.answered)
+    }
+
+    @Test
+    fun `the log line never contradicts its reason`() {
+        listOf(missing to offline, offline to quota, missing to quota, offline to offline).forEach { (m, a) ->
+            val line = UpdateChecker.logLine(UpdateChecker.failureVerdict(m, a))
+            val network = line.contains("DNS")
+            assertTrue(line, !network || line.startsWith("vérification impossible"))
+        }
     }
 
     @Test

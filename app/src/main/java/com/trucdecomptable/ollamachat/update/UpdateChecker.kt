@@ -78,6 +78,14 @@ object UpdateChecker {
         }
 
     /**
+     * Two different facts, worded so the diagnostic expert can tell them
+     * apart: GitHub refused (the network works), or nothing answered at all.
+     */
+    internal fun logLine(result: CheckResult.Unreachable): String =
+        if (result.answered) "GitHub a répondu : ${result.reason}"
+        else "vérification impossible : ${result.reason}"
+
+    /**
      * Why neither source gave an answer, and whether anything answered at all.
      *
      * A network failure explains everything. Failing that, the API's answer
@@ -88,7 +96,10 @@ object UpdateChecker {
         val failures = listOfNotNull(manifest.exceptionOrNull(), api.exceptionOrNull())
         val network = failures.firstOrNull { it !is HttpStatusException }
         val cause = network ?: api.exceptionOrNull() ?: manifest.exceptionOrNull()
-        val answered = manifest.isSuccess || api.isSuccess || failures.any { it is HttpStatusException }
+        // Answered means what the reason says: an HTTP refusal, or two answers
+        // that could not be read. A network failure next to a 404 used to give
+        // "GitHub a répondu : DNS…", a sentence that contradicts itself.
+        val answered = cause == null || cause is HttpStatusException
         return CheckResult.Unreachable(cause?.let { describe(it) } ?: "réponse illisible", answered)
     }
 

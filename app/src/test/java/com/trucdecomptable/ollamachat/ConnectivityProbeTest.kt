@@ -22,6 +22,7 @@ class ConnectivityProbeTest {
         updateReached: Boolean = false,
         route: ServerRoute = ServerRoute.UNKNOWN,
         vpnDefault: Boolean = false,
+        serverReached: Boolean = false,
     ) = ConnectivityProbe.Report(
         vpnActive = vpn,
         legs = listOf(
@@ -30,6 +31,7 @@ class ConnectivityProbeTest {
                 ok = serverOk,
                 detail = if (serverOk) "joignable" else "failed to connect",
                 millis = 12,
+                reached = serverReached,
             ),
             ConnectivityProbe.Leg(
                 name = ConnectivityProbe.UPDATE,
@@ -116,6 +118,7 @@ class ConnectivityProbeTest {
                 report(serverOk = true, updateOk = false, updateReached = true),
                 report(serverOk = true, updateOk = false, vpnDefault = true),
                 report(serverOk = true, updateOk = false),
+                report(serverOk = false, updateOk = true, serverReached = true, route = ServerRoute.VPN_SPECIFIC),
             )
         reports.forEach { r ->
             val v = verdict(r)
@@ -167,5 +170,79 @@ class ConnectivityProbeTest {
     fun `allOk is false as soon as one leg fails`() {
         assertTrue(report(serverOk = true, updateOk = true).allOk)
         assertFalse(report(serverOk = true, updateOk = false).allOk)
+    }
+
+    // --- a refusal is an answer ---
+
+    @Test
+    fun `a refused connection is not a routing problem`() {
+        // Ollama stopped, or listening on 127.0.0.1 only: a reset came back,
+        // so the way there and back works whatever the routes are.
+        val v = verdict(report(serverOk = false, updateOk = false, serverReached = true, route = ServerRoute.VPN_SPECIFIC))
+        assertTrue(v, v.contains("OLLAMA_HOST"))
+        assertFalse(v, v.contains("route de retour"))
+    }
+
+    @Test
+    fun `a refusal is told from silence`() {
+        val refused = java.net.ConnectException(
+            "failed to connect to /192.168.0.162 (port 11434) from /192.168.27.65 (port 43352) after 10000ms: " +
+                "isConnected failed: ECONNREFUSED (Connection refused)"
+        )
+        assertTrue(ConnectivityProbe.refusedByServer(refused))
+        assertTrue(ConnectivityProbe.refusedByServer(java.io.IOException("HTTP 403")))
+        assertFalse(ConnectivityProbe.refusedByServer(java.net.SocketTimeoutException("failed to connect after 10000ms")))
+        assertFalse(ConnectivityProbe.refusedByServer(java.net.NoRouteToHostException("No route to host")))
+    }
+
+    // --- the route classification itself ---
+
+    private fun route(cidr: String, vpn: Boolean = true, excluded: Boolean = false): ConnectivityProbe.Route {
+        val (address, length) = cidr.split("/")
+        return ConnectivityProbe.Route(
+            prefix = java.net.InetAddress.getByName(address),
+            length = length.toInt(),
+            isDefault = length.toInt() == 0,
+            vpn = vpn,
+            excluded = excluded,
+        )
+    }
+
+    private val server = java.net.InetAddress.getByName("192.168.0.162")
+
+    @Test
+    fun `a default route alone is not a route to the server's network`() {
+        assertEquals(ServerRoute.VPN_DEFAULT_ONLY, ConnectivityProbe.classify(server, listOf(route("0.0.0.0/0"))))
+    }
+
+    @Test
+    fun `a specific tunnel route wins over the default one`() {
+        val routes = listOf(route("0.0.0.0/0"), route("192.168.0.0/24"))
+        assertEquals(ServerRoute.VPN_SPECIFIC, ConnectivityProbe.classify(server, routes))
+    }
+
+    @Test
+    fun `a tunnel that covers other networks only leaves the server outside`() {
+        assertEquals(ServerRoute.OUTSIDE_VPN, ConnectivityProbe.classify(server, listOf(route("10.8.0.0/24"))))
+    }
+
+    @Test
+    fun `the phone's own wi-fi covering the server is named as such`() {
+        val routes = listOf(route("10.8.0.0/24"), route("192.168.0.0/24", vpn = false))
+        assertEquals(ServerRoute.LOCAL_LINK, ConnectivityProbe.classify(server, routes))
+        // No tunnel at all: the same.
+        assertEquals(ServerRoute.LOCAL_LINK, ConnectivityProbe.classify(server, listOf(route("192.168.0.0/24", vpn = false))))
+    }
+
+    @Test
+    fun `a tunnel's exclusion sends the server outside it`() {
+        // "Exclure les IP privées": a default route, and a way out for the LAN.
+        val routes = listOf(route("0.0.0.0/0"), route("192.168.0.0/16", excluded = true), route("192.168.0.0/24", vpn = false))
+        assertEquals(ServerRoute.LOCAL_LINK, ConnectivityProbe.classify(server, routes))
+    }
+
+    @Test
+    fun `no route at all says nothing`() {
+        assertEquals(ServerRoute.UNKNOWN, ConnectivityProbe.classify(server, emptyList()))
     }
 }

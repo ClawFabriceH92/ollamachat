@@ -34,11 +34,9 @@ import com.trucdecomptable.ollamachat.ui.theme.OllamaChatTheme
 import com.trucdecomptable.ollamachat.ui.update.UpdateDialog
 import com.trucdecomptable.ollamachat.ui.welcome.WelcomeScreen
 import com.trucdecomptable.ollamachat.update.UpdateManager
-import com.trucdecomptable.ollamachat.util.PinUtils
-import kotlinx.coroutines.Dispatchers
+import com.trucdecomptable.ollamachat.util.PinUnlock
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class MainActivity : FragmentActivity() {
 
@@ -153,24 +151,8 @@ class MainActivity : FragmentActivity() {
                         lockedUntil = lock.lockedUntil,
                         pinLength = lock.pinLength,
                         onSubmit = { pin ->
-                            // PBKDF2 is intentionally slow: never on the main thread.
-                            val ok = withContext(Dispatchers.Default) {
-                                PinUtils.verify(pin, lock.pinHash)
-                            }
-                            if (ok) {
-                                if (PinUtils.needsUpgrade(lock.pinHash)) {
-                                    val upgraded = withContext(Dispatchers.Default) { PinUtils.hash(pin) }
-                                    settings.setPinHash(upgraded, pin.length)
-                                } else if (lock.pinLength == null) {
-                                    // A PIN set before the length was recorded: learn
-                                    // it now, so the pad can auto-submit from here on.
-                                    settings.setPinLength(pin.length)
-                                }
-                                settings.clearFailedUnlocks()
-                                AuthManager.unlock()
-                            } else {
-                                settings.recordFailedUnlock()
-                            }
+                            val ok = PinUnlock.verifyAndRecord(settings, lock, pin)
+                            if (ok) AuthManager.unlock()
                             ok
                         },
                         onBiometric = {

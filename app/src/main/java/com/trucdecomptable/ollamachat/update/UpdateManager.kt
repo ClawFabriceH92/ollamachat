@@ -95,14 +95,7 @@ object UpdateManager {
                 }
 
                 is UpdateChecker.CheckResult.Unreachable -> {
-                    // Two different facts, logged so the diagnostic expert can
-                    // tell them apart: GitHub refused (the network works), or
-                    // nothing answered at all.
-                    DiagnosticLog.record(
-                        "update",
-                        if (result.answered) "GitHub a répondu : ${result.reason}"
-                        else "vérification impossible : ${result.reason}",
-                    )
+                    DiagnosticLog.record("update", UpdateChecker.logLine(result))
                     // A check that failed must not hold the hourly slot. The
                     // network that blocked it is often gone minutes later — a
                     // tunnel coming up or down — and the next launch has to be

@@ -48,6 +48,21 @@ class OllamaErrorClassificationTest {
     }
 
     @Test
+    fun `a connect timeout on a retry is still a connect timeout`() {
+        // A pooled connection found dead, then a new one that never connects:
+        // what the first attempt set must not turn this into "the model is slow".
+        val error = client.classifyCode(
+            SocketTimeoutException(
+                "failed to connect to /192.168.0.162 (port 11434) from /192.168.27.65 (port 43352) after 10000ms"
+            ),
+            target = target,
+            responseStarted = false,
+            connected = true,
+        )
+        assertEquals(ChatErrorCode.CONNECT_TIMEOUT, error.code)
+    }
+
+    @Test
     fun `a timeout once the server has answered is a slow server`() {
         val error = client.classifyCode(
             SocketTimeoutException("timeout"),

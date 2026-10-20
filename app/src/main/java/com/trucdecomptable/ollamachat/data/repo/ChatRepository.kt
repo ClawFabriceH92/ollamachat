@@ -55,6 +55,9 @@ class ChatRepository(
     private val mcpCallTool: suspend (String, String, String) -> Result<String> =
         { url, name, args -> McpClient.callTool(url, name, args) },
     private val approvalTimeoutMs: Long = ToolPolicy.APPROVAL_TIMEOUT_MS,
+    /** web_search, injectable so tests do not reach the Internet. */
+    private val webSearch: suspend (String, String) -> ToolExecutor.SearchOutcome =
+        { query, braveKey -> ToolExecutor.webSearch(query, braveKey) },
     private val imageProvider: ImageProvider = ImageProvider { ImageStore.readBase64(it) },
 ) {
     /** Indirection so tests do not need Android's Base64. */
@@ -370,9 +373,9 @@ class ChatRepository(
                 )
                 // An address a search returned existed before the model could
                 // write anything into it, so reading it cannot leak anything.
-                if (tc.name == "web_search" && !outcome.internal) {
-                    turn.trustedUrls += ToolPolicy.extractUrls(outcome.text)
-                }
+                // Only the results' own addresses: the text also echoes the
+                // query, which the model wrote.
+                turn.trustedUrls += outcome.foundUrls
                 toolMessages.add(
                     OllamaChatMessage(
                         role = "tool",
@@ -447,8 +450,15 @@ class ChatRepository(
         var ownerAbsent = false
     }
 
-    /** A tool's answer, and whether the app wrote it itself rather than relaying foreign data. */
-    private data class ToolOutcome(val text: String, val internal: Boolean = false)
+    /**
+     * A tool's answer, whether the app wrote it itself rather than relaying
+     * foreign data, and the addresses a search returned.
+     */
+    private data class ToolOutcome(
+        val text: String,
+        val internal: Boolean = false,
+        val foundUrls: List<String> = emptyList(),
+    )
 
     private suspend fun runTool(
         tc: ToolCall,
@@ -482,7 +492,9 @@ class ChatRepository(
                 approver.request(
                     ApprovalRequest(
                         toolName = tc.name,
-                        serverName = ToolPolicy.serverOf(tc.name, prefixes),
+                        // A native tool comes from no server, whatever a server
+                        // is called: "fetch" must not claim fetch_url.
+                        serverName = if (tc.name in ToolPolicy.NATIVE) null else ToolPolicy.serverOf(tc.name, prefixes),
                         arguments = tc.arguments,
                         allowAlways = alwaysOffered,
                     )
@@ -505,8 +517,9 @@ class ChatRepository(
             }
         }
         val url = if (tc.name == "fetch_url") ToolPolicy.urlArgument(tc.arguments) else null
-        val typed = url != null && ToolPolicy.normalizeUrl(url) in turn.typedUrls
-        return ToolOutcome(dispatch(tc, mcpServers, braveKey, allowPrivateFetch = typed).take(MAX_TRACE_CHARS))
+        val typed = url != null && url in turn.typedUrls
+        return dispatch(tc, mcpServers, braveKey, allowPrivateFetch = typed)
+            .let { it.copy(text = it.text.take(MAX_TRACE_CHARS)) }
     }
 
     private suspend fun dispatch(
@@ -514,7 +527,7 @@ class ChatRepository(
         mcpServers: List<McpServer>,
         braveKey: String,
         allowPrivateFetch: Boolean,
-    ): String = when {
+    ): ToolOutcome = when {
         tc.name == "save_memory" -> {
             val content = try {
                 JSONObject(tc.arguments).optString("content", "").trim()
@@ -523,24 +536,30 @@ class ChatRepository(
             }
             if (content.isNotEmpty()) {
                 db.memoryDao().insert(Memory(content = content))
-                "Mémorisé : $content"
+                ToolOutcome("Mémorisé : $content")
             } else {
-                "Contenu vide, rien mémorisé"
+                ToolOutcome("Contenu vide, rien mémorisé")
             }
+        }
+        tc.name == "web_search" -> {
+            val query = runCatching { JSONObject(tc.arguments).optString("query", "") }.getOrDefault("")
+            webSearch(query, braveKey).let { ToolOutcome(it.text, foundUrls = it.urls) }
         }
         // Native names first, as the policy classified them: a server whose
         // name and tool happen to spell a native name must not receive the
         // call past the gate.
         tc.name in ToolPolicy.NATIVE ->
-            ToolExecutor.execute(tc.name, tc.arguments, braveKey, allowPrivateFetch)
+            ToolOutcome(ToolExecutor.execute(tc.name, tc.arguments, braveKey, allowPrivateFetch))
         else -> {
             val serverName = ToolPolicy.serverOf(tc.name, mcpServers.map { it.name })
             val server = serverName?.let { name -> mcpServers.firstOrNull { it.name == name } }
             if (server == null) {
-                "Outil inconnu : ${tc.name}"
+                ToolOutcome("Outil inconnu : ${tc.name}")
             } else {
-                mcpCallTool(server.url, tc.name.removePrefix("${server.name}_"), tc.arguments)
-                    .getOrElse { "Erreur MCP : ${it.message}" }
+                ToolOutcome(
+                    mcpCallTool(server.url, tc.name.removePrefix("${server.name}_"), tc.arguments)
+                        .getOrElse { "Erreur MCP : ${it.message}" }
+                )
             }
         }
     }

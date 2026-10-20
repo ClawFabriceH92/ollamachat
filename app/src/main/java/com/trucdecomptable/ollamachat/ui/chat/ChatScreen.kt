@@ -350,7 +350,10 @@ fun ChatScreen(
         bottomBar = {
             ChatInputBar(
                 input = input,
-                onInputChange = { input = it },
+                onInputChange = {
+                    input = it
+                    vm.onTyping()
+                },
                 isSending = state.isSending,
                 onSend = {
                     if (input.isNotBlank()) {
@@ -624,8 +627,13 @@ private fun ToolApprovalDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                // The risk is not the same: an MCP tool does what its server
+                // says; a page read sends whatever the model put in the address.
                 Text(
-                    text = stringResource(R.string.tool_approval_warning),
+                    text = stringResource(
+                        if (request.serverName != null) R.string.tool_approval_warning
+                        else R.string.tool_approval_warning_address
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )

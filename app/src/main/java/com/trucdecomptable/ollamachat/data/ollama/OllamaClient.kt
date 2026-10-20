@@ -68,9 +68,18 @@ open class OllamaClient(
             .readTimeout(600, TimeUnit.SECONDS)
             // Network interceptors only run once a connection exists — pooled
             // or fresh — which is exactly the fact a timeout is classified by.
+            // An attempt that fails otherwise than by waiting (a pooled
+            // connection found dead) proves nothing: OkHttp retries on a new
+            // one, and that one has to connect on its own.
             .addNetworkInterceptor { chain ->
-                chain.request().tag(CallPhase::class.java)?.connected = true
-                chain.proceed(chain.request())
+                val phase = chain.request().tag(CallPhase::class.java)
+                phase?.connected = true
+                try {
+                    chain.proceed(chain.request())
+                } catch (e: IOException) {
+                    if (e !is SocketTimeoutException) phase?.connected = false
+                    throw e
+                }
             }
 
         fun sharedStreamClient(): OkHttpClient = streamClientInstance
@@ -99,6 +108,14 @@ open class OllamaClient(
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    /** True when anything at all answers at [target], an HTTP error included. */
+    private suspend fun answers(target: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder().url("$target/api/version").get().build()
+            http.newCall(req).execute().use { true }
+        }.getOrDefault(false)
     }
 
     /** List models installed on the server. */
@@ -384,11 +401,14 @@ open class OllamaClient(
             if (call.isCanceled()) {
                 ChatStreamResult(text.toString(), thinking = reasoning.toString(), cancelled = true)
             } else {
-                ChatStreamResult(
-                    text.toString(),
-                    thinking = reasoning.toString(),
-                    error = classify(e, target, responseStarted, phase.connected),
-                )
+                var error = classify(e, target, responseStarted, phase.connected)
+                // "Connected, the network works" is only said once checked: a
+                // pooled connection the tunnel silently stopped carrying also
+                // gets its request written, then waits for nothing.
+                if (error.code == ChatErrorCode.NO_FIRST_BYTE && !answers(target)) {
+                    error = ChatError(ChatErrorCode.CONNECT_TIMEOUT, target)
+                }
+                ChatStreamResult(text.toString(), thinking = reasoning.toString(), error = error)
             }
         } catch (e: Exception) {
             ChatStreamResult(
@@ -552,12 +572,20 @@ open class OllamaClient(
         responseStarted: Boolean = true,
         connected: Boolean = true,
     ): ChatError = when {
-        e is SocketTimeoutException && !connected -> ChatError(ChatErrorCode.CONNECT_TIMEOUT, target)
+        // A connect timeout says so itself (Android: "failed to connect to …",
+        // the JVM: "connect timed out"), whatever an earlier attempt left set.
+        e is SocketTimeoutException && (!connected || isConnectTimeout(e)) ->
+            ChatError(ChatErrorCode.CONNECT_TIMEOUT, target)
         e is SocketTimeoutException && !responseStarted -> ChatError(ChatErrorCode.NO_FIRST_BYTE, target)
         e is SocketTimeoutException -> ChatError(ChatErrorCode.TIMEOUT)
         e is ConnectException || e is UnknownHostException || e is NoRouteToHostException ->
             ChatError(ChatErrorCode.CONNECTION)
         else -> ChatError(ChatErrorCode.UNKNOWN, e.message)
+    }
+
+    private fun isConnectTimeout(e: SocketTimeoutException): Boolean {
+        val message = e.message.orEmpty().lowercase()
+        return message.startsWith("failed to connect") || message.startsWith("connect timed out")
     }
 
     private fun extractError(body: String): String? = try {

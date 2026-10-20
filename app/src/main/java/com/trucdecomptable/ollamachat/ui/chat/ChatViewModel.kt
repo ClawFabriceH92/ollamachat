@@ -24,6 +24,7 @@ import com.trucdecomptable.ollamachat.data.tools.ToolApprover
 import com.trucdecomptable.ollamachat.data.web.UrlFetcher
 import com.trucdecomptable.ollamachat.data.web.WebSearchClient
 import com.trucdecomptable.ollamachat.ui.documents.DocumentExtractor
+import com.trucdecomptable.ollamachat.util.DiagnosticLog
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -445,48 +446,88 @@ class ChatViewModel(
     fun importDocuments(uris: List<Uri>, context: Context) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
-            val imagePaths = mutableListOf<String>()
-            val labels = mutableListOf<String>()
-            var documents = 0
-
-            uris.forEach { uri ->
-                val mime = context.contentResolver.getType(uri) ?: "*/*"
-                val extracted = DocumentExtractor.extract(context, uri, mime)
-                if (extracted.imageBytes != null) {
-                    ImageStore.save(context, extracted.imageBytes)?.let { path ->
-                        imagePaths.add(path)
-                        labels.add(extracted.label)
-                    }
-                } else {
-                    db.messageDao().insert(
-                        Message(
-                            conversationId = conversationId,
-                            role = "system",
-                            content = "Document « ${extracted.label} » :\n${extracted.text.orEmpty()}",
-                        )
-                    )
-                    documents++
-                }
+            // Importing is activity: the countdown restarts first, so a slow
+            // pick does not lose the conversation while the files are read.
+            runCatching { db.conversationDao().touch(conversationId) }
+            // A conversation purged while the picker was open is gone: its
+            // rows cannot be written, and the screen is leaving anyway.
+            val imported = try {
+                importInto(uris, context)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                DiagnosticLog.record("import", e)
+                null
             }
-
-            if (imagePaths.isNotEmpty()) {
-                db.messageDao().insert(
-                    Message(
-                        conversationId = conversationId,
-                        role = "user",
-                        content = labels.joinToString(", "),
-                        contentType = "image",
-                        imagePaths = imagePathsOf(imagePaths),
-                    )
-                )
-            }
-
-            when {
-                imagePaths.isNotEmpty() -> toast(R.string.toast_image_added)
-                documents > 0 -> toast(R.string.toast_document_imported)
+            when (imported) {
+                Imported.IMAGES -> toast(R.string.toast_image_added)
+                Imported.DOCUMENTS -> toast(R.string.toast_document_imported)
                 else -> toast(R.string.toast_image_failed)
             }
         }
+    }
+
+    private enum class Imported { IMAGES, DOCUMENTS, NOTHING }
+
+    private suspend fun importInto(uris: List<Uri>, context: Context): Imported {
+        val imagePaths = mutableListOf<String>()
+        val labels = mutableListOf<String>()
+        var documents = 0
+
+        uris.forEach { uri ->
+            val mime = context.contentResolver.getType(uri) ?: "*/*"
+            val extracted = DocumentExtractor.extract(context, uri, mime)
+            if (extracted.imageBytes != null) {
+                ImageStore.save(context, extracted.imageBytes)?.let { path ->
+                    imagePaths.add(path)
+                    labels.add(extracted.label)
+                }
+            } else {
+                db.messageDao().insert(
+                    Message(
+                        conversationId = conversationId,
+                        role = "system",
+                        content = "Document « ${extracted.label} » :\n${extracted.text.orEmpty()}",
+                    )
+                )
+                documents++
+            }
+        }
+
+        if (imagePaths.isNotEmpty()) {
+            db.messageDao().insert(
+                Message(
+                    conversationId = conversationId,
+                    role = "user",
+                    content = labels.joinToString(", "),
+                    contentType = "image",
+                    imagePaths = imagePathsOf(imagePaths),
+                )
+            )
+        }
+
+        return when {
+            imagePaths.isNotEmpty() -> Imported.IMAGES
+            documents > 0 -> Imported.DOCUMENTS
+            else -> Imported.NOTHING
+        }
+    }
+
+    private var lastTypingTouch = 0L
+
+    /**
+     * Typing is activity. In an ephemeral conversation the countdown restarts
+     * as the owner writes, at most twice a minute: otherwise a long question
+     * outlived it, the conversation was purged and the screen closed on the
+     * draft. A permanent conversation is left alone, or merely typing would
+     * reorder the list.
+     */
+    fun onTyping() {
+        if (uiState.value.ephemeralMinutes <= 0) return
+        val now = System.currentTimeMillis()
+        if (now - lastTypingTouch < TYPING_TOUCH_MS) return
+        lastTypingTouch = now
+        viewModelScope.launch { runCatching { db.conversationDao().touch(conversationId) } }
     }
 
     // --- conversation & messages ---
@@ -597,6 +638,9 @@ class ChatViewModel(
         /** Enough to fill several screens; the rest loads on demand. */
         internal const val INITIAL_WINDOW = 200
         internal const val WINDOW_STEP = 200
+
+        /** Typing restarts an ephemeral countdown at most this often. */
+        private const val TYPING_TOUCH_MS = 30_000L
     }
 
     class Factory(private val conversationId: Long, private val container: AppContainer) :

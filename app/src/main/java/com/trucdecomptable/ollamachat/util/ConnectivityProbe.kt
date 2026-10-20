@@ -7,7 +7,10 @@ import android.net.RouteInfo
 import com.trucdecomptable.ollamachat.data.ollama.OllamaClient
 import com.trucdecomptable.ollamachat.update.UpdateChecker
 import kotlinx.coroutines.CancellationException
+import java.net.ConnectException
+import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.NoRouteToHostException
 
 /**
  * Which leg of the network is down, and why.
@@ -40,6 +43,9 @@ object ConnectivityProbe {
 
         /** A tunnel is up, but none of its routes covers the server. */
         OUTSIDE_VPN,
+
+        /** Outside any tunnel, on a network the phone is directly attached to (the Wi-Fi). */
+        LOCAL_LINK,
 
         /** No tunnel, a host name instead of an address, or routes unreadable. */
         UNKNOWN,
@@ -86,6 +92,13 @@ object ConnectivityProbe {
         if (server.ok && update.ok) return null
 
         if (!server.ok) {
+            // A refusal came back from the server's machine: the way there and
+            // back works, whatever the routes say.
+            if (server.reached) {
+                return "Le serveur répond mais refuse la connexion : Ollama ne " +
+                    "tourne pas, n'écoute que sur 127.0.0.1 (règle OLLAMA_HOST=0.0.0.0), ou un " +
+                    "pare-feu rejette le port. Le réseau, lui, achemine bien les paquets."
+            }
             if (!update.ok && !update.reached) {
                 return "Aucune des deux destinations ne répond : le problème est en amont " +
                     "des deux (pas de réseau, ou un tunnel actif qui ne route rien)."
@@ -105,6 +118,10 @@ object ConnectivityProbe {
                     "Un tunnel est actif mais aucune de ses routes ne couvre le serveur : ajoute " +
                         "son sous-réseau aux adresses autorisées du VPN (AllowedIPs dans " +
                         "WireGuard), ou décoche « Exclure les IP privées »."
+                ServerRoute.LOCAL_LINK ->
+                    "Le serveur est sur le réseau local du téléphone, hors de tout tunnel, et ne " +
+                        "répond pas : la machine est éteinte ou en veille, ou son pare-feu ignore " +
+                        "le téléphone."
                 ServerRoute.UNKNOWN ->
                     "Internet répond mais pas le serveur. La table de routage ci-dessus dit " +
                         "par où ses paquets partent."
@@ -136,7 +153,9 @@ object ConnectivityProbe {
         val legs = listOf(
             timed("$SERVER ($baseUrl)") {
                 require(baseUrl.isNotBlank()) { "aucune adresse configurée" }
-                client.testConnection(baseUrl).getOrThrow()
+                client.testConnection(baseUrl).getOrElse { e ->
+                    throw LegFailure(e.message ?: e.javaClass.simpleName, reached = refusedByServer(e))
+                }
                 "joignable"
             },
             // The real updater path, not a synthetic ping: what fails here is
@@ -150,14 +169,66 @@ object ConnectivityProbe {
                 }
             },
         )
-        val routes = vpnRoutes(context)
+        val routes = routes(context)
+        val vpn = routes.filter { it.vpn }
         return Report(
             vpnActive = vpnActive(context),
             legs = legs,
             networks = describeRouting(context),
-            serverRoute = serverRoute(baseUrl, routes),
-            vpnDefaultRoute = routes.any { it.isDefaultRoute },
+            serverRoute = ipv4Host(baseUrl)
+                ?.let { runCatching { InetAddress.getByName(it) }.getOrNull() }
+                ?.let { classify(it, routes) }
+                ?: ServerRoute.UNKNOWN,
+            // An IPv6 default route sends nothing of an IPv4 server anywhere.
+            vpnDefaultRoute = vpn.any { it.isDefault && !it.excluded && it.prefix is Inet4Address },
         )
+    }
+
+    /**
+     * Whether a failed connection proves the server's machine answered: a
+     * refusal (a reset came back) or an HTTP error. A timeout or "no route"
+     * proves nothing came back at all.
+     */
+    internal fun refusedByServer(e: Throwable): Boolean {
+        if (e.message.orEmpty().startsWith("HTTP ")) return true
+        if (e is NoRouteToHostException) return false
+        var cause: Throwable? = e
+        while (cause != null) {
+            val text = cause.message.orEmpty()
+            if (text.contains("ECONNREFUSED") || text.contains("Connection refused", ignoreCase = true)) return true
+            cause = cause.cause
+        }
+        return e is ConnectException && e.message.orEmpty().contains("refused", ignoreCase = true)
+    }
+
+    /** A route, reduced to what the classification needs. */
+    internal data class Route(
+        val prefix: InetAddress,
+        val length: Int,
+        val isDefault: Boolean,
+        /** Declared by a tunnel. */
+        val vpn: Boolean,
+        /** A tunnel's way out (throw or unreachable), not a way in. */
+        val excluded: Boolean = false,
+    )
+
+    /**
+     * How packets for [server] would leave, from the routes of every network.
+     * A tunnel's exclusion covering the server sends it outside the tunnel;
+     * then a network the phone is attached to may still carry it.
+     */
+    internal fun classify(server: InetAddress, routes: List<Route>): ServerRoute {
+        fun covers(r: Route) = IpPrefix.matches(server, r.prefix, r.length)
+        val vpn = routes.filter { it.vpn }
+        val excluded = vpn.any { it.excluded && covers(it) }
+        val inside = vpn.filterNot { it.excluded }
+        return when {
+            !excluded && inside.any { !it.isDefault && covers(it) } -> ServerRoute.VPN_SPECIFIC
+            !excluded && inside.any { it.isDefault && covers(it) } -> ServerRoute.VPN_DEFAULT_ONLY
+            routes.any { !it.vpn && !it.isDefault && covers(it) } -> ServerRoute.LOCAL_LINK
+            vpn.isNotEmpty() -> ServerRoute.OUTSIDE_VPN
+            else -> ServerRoute.UNKNOWN
+        }
     }
 
     /** True when the active network is a tunnel. */
@@ -167,36 +238,28 @@ object ConnectivityProbe {
         caps?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
     }.getOrDefault(false)
 
-    /**
-     * Every route a tunnel declares, minus the exclusions it declares as
-     * throw or unreachable routes, which are ways out of the tunnel, not in.
-     */
-    private fun vpnRoutes(context: Context): List<RouteInfo> = runCatching {
+    /** Every route of every network, marked with what it means for the classification. */
+    private fun routes(context: Context): List<Route> = runCatching {
         val cm = context.getSystemService(ConnectivityManager::class.java)
             ?: return@runCatching emptyList()
         @Suppress("DEPRECATION")
-        cm.allNetworks.toList()
-            .filter { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true }
-            .flatMap { cm.getLinkProperties(it)?.routes.orEmpty() }
-            .filterNot { isExclusion(it.toString()) }
+        cm.allNetworks.toList().flatMap { network ->
+            val vpn = cm.getNetworkCapabilities(network)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+            cm.getLinkProperties(network)?.routes.orEmpty().map { route -> route.toRoute(vpn) }
+        }
     }.getOrDefault(emptyList())
+
+    private fun RouteInfo.toRoute(vpn: Boolean) = Route(
+        prefix = destination.address,
+        length = destination.prefixLength,
+        isDefault = isDefaultRoute,
+        vpn = vpn,
+        excluded = isExclusion(toString()),
+    )
 
     /** RouteInfo prints its type after the route when it is not a plain unicast route. */
     internal fun isExclusion(route: String): Boolean =
         route.contains(" throw") || route.contains(" unreachable")
-
-    private fun serverRoute(baseUrl: String, routes: List<RouteInfo>): ServerRoute = runCatching {
-        if (routes.isEmpty()) return@runCatching ServerRoute.UNKNOWN
-        // Only an address literal: a host name would go to DNS, and a name
-        // resolved through the tunnel says nothing about the routes.
-        val host = ipv4Host(baseUrl) ?: return@runCatching ServerRoute.UNKNOWN
-        val address = InetAddress.getByName(host)
-        when {
-            routes.any { !it.isDefaultRoute && it.matches(address) } -> ServerRoute.VPN_SPECIFIC
-            routes.any { it.isDefaultRoute && it.matches(address) } -> ServerRoute.VPN_DEFAULT_ONLY
-            else -> ServerRoute.OUTSIDE_VPN
-        }
-    }.getOrDefault(ServerRoute.UNKNOWN)
 
     /** The host of [baseUrl] when it is an IPv4 literal, else null. */
     internal fun ipv4Host(baseUrl: String): String? {

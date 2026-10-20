@@ -65,8 +65,10 @@ object ToolPolicy {
      *
      * fetch_url runs unasked only on an address that already existed before
      * the model could have written anything into it: one the user typed, or
-     * one a search returned this turn, compared whole. A trusted domain is not
-     * enough, because the data can ride in the path or a subdomain. The
+     * one a search returned this turn, compared character for character. A
+     * trusted domain is not enough, because the data can ride in the path or
+     * a subdomain; nor is a trusted address with a dot or a slash more at the
+     * end, because how many the model adds spells out data too. The
      * always-allowed list does not apply to it either: "always" would mean the
      * door stays open for every future page.
      *
@@ -84,7 +86,7 @@ object ToolPolicy {
         if (!gateEnabled) return false
         return when (tierOf(toolName, mcpPrefixes)) {
             Tier.READ, Tier.THIRD_PARTY, Tier.LOCAL_WRITE -> false
-            Tier.NETWORK -> urlArgument(arguments)?.let { normalizeUrl(it) in trustedUrls } != true
+            Tier.NETWORK -> urlArgument(arguments)?.let { it in trustedUrls } != true
             Tier.EXTERNAL -> toolName !in allowed
         }
     }
@@ -101,21 +103,43 @@ object ToolPolicy {
     fun serverOf(toolName: String, mcpPrefixes: Collection<String>): String? =
         mcpPrefixes.filter { toolName.startsWith("${it}_") }.maxByOrNull { it.length }
 
+    /**
+     * True when a new MCP server name would be ambiguous. Tool names are
+     * "server_tool": a server called "fetch" would seem to provide fetch_url,
+     * two servers of one name share a single "always" list and one of them
+     * receives every call, and "a" next to "a_b" can each claim the other's
+     * tools. An underscore in a new name is refused for that last reason.
+     */
+    fun mcpNameClashes(name: String, existing: Collection<String>): Boolean =
+        name in existing || '_' in name ||
+            NATIVE.any { it.startsWith("${name}_") } ||
+            existing.any { it.startsWith("${name}_") || name.startsWith("${it}_") }
+
     /** The "url" argument of a fetch_url call, or null when there is none. */
     fun urlArgument(arguments: String): String? = runCatching {
         JSONObject(arguments).optString("url", "").trim().ifBlank { null }
     }.getOrNull()
 
-    private val URL_PATTERN = Regex("""https?://[^\s<>"'`)\]}]+""")
+    private val URL_PATTERN = Regex("""https?://[^\s<>"'`\]}]+""")
 
-    /** Addresses written in [text], as they would be compared. */
+    /** Addresses written in [text], without what the sentence around them adds. */
     fun extractUrls(text: String): Set<String> =
-        URL_PATTERN.findAll(text).map { normalizeUrl(it.value) }.toSet()
+        URL_PATTERN.findAll(text).map { trimSentence(it.value) }.toSet()
 
     /**
-     * The only liberty taken: trailing punctuation a sentence adds, and a
-     * trailing slash. Neither can carry data.
+     * For an address read from prose only: the punctuation a sentence puts
+     * after it, and a closing parenthesis it never opened, as in
+     * "(voir https://site/page)". Never applied to the address the model asks
+     * for, which must equal one of these exactly.
      */
-    fun normalizeUrl(url: String): String =
-        url.trim().trimEnd('.', ',', ';', ':', '!', '?', '»').trimEnd('/')
+    internal fun trimSentence(url: String): String {
+        var current = url
+        while (true) {
+            val trimmed = current.trimEnd('.', ',', ';', ':', '!', '?', '»')
+            val unbalanced = trimmed.endsWith(')') && trimmed.count { it == ')' } > trimmed.count { it == '(' }
+            val next = if (unbalanced) trimmed.dropLast(1) else trimmed
+            if (next == current) return current
+            current = next
+        }
+    }
 }

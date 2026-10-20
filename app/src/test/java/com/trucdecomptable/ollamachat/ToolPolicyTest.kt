@@ -132,12 +132,40 @@ class ToolPolicyTest {
     }
 
     @Test
-    fun `addresses are compared whole, minus the punctuation of a sentence`() {
+    fun `addresses read from prose lose only what the sentence adds`() {
         assertEquals(
-            setOf("https://a.example/x", "https://b.example/y", "https://c.example/z"),
-            ToolPolicy.extractUrls("Voir https://a.example/x. Et https://b.example/y/, puis (https://c.example/z)"),
+            setOf(
+                "https://a.example/x",
+                "https://b.example/y/",
+                "https://c.example/z",
+                "https://fr.wikipedia.org/wiki/Paris_(homonymie)",
+            ),
+            ToolPolicy.extractUrls(
+                "Voir https://a.example/x. Et https://b.example/y/, puis (https://c.example/z) " +
+                    "et https://fr.wikipedia.org/wiki/Paris_(homonymie).",
+            ),
         )
-        assertEquals("https://a.example/x", ToolPolicy.normalizeUrl(" https://a.example/x/ "))
+    }
+
+    @Test
+    fun `the address the model asks for must match character for character`() {
+        val trusted = setOf("https://site.example/page")
+        // How many dots or slashes it adds would spell out data, one page at a time.
+        assertTrue(needs("fetch_url", url("https://site.example/page."), trusted = trusted))
+        assertTrue(needs("fetch_url", url("https://site.example/page.,;!?"), trusted = trusted))
+        assertTrue(needs("fetch_url", url("https://site.example/page/"), trusted = trusted))
+        assertFalse(needs("fetch_url", url("https://site.example/page"), trusted = trusted))
+    }
+
+    @Test
+    fun `an mcp server name that could be confused is refused`() {
+        assertTrue(ToolPolicy.mcpNameClashes("fichiers", listOf("fichiers")))
+        // Would seem to provide fetch_url, web_search, get_weather, save_memory.
+        listOf("fetch", "web", "get", "save").forEach { assertTrue(it, ToolPolicy.mcpNameClashes(it, emptyList())) }
+        // "a" next to "a_b": each could claim the other's tools.
+        assertTrue(ToolPolicy.mcpNameClashes("a", listOf("a_b")))
+        assertTrue(ToolPolicy.mcpNameClashes("a_b", emptyList()))
+        assertFalse(ToolPolicy.mcpNameClashes("meteo", listOf("fichiers")))
     }
 
     @Test

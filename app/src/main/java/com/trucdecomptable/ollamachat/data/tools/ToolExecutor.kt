@@ -47,6 +47,34 @@ object ToolExecutor {
         ),
     )
 
+    /** A search's text for the model, and the addresses its results point to. */
+    data class SearchOutcome(val text: String, val urls: List<String> = emptyList())
+
+    /**
+     * Only [SearchOutcome.urls] may be trusted afterwards: they come from the
+     * search service. The text also carries what the model wrote into its
+     * query ("Aucun résultat pour « … »", an error message), and an address
+     * planted there would have been fetched unasked.
+     */
+    suspend fun webSearch(query: String, braveApiKey: String): SearchOutcome =
+        withContext(Dispatchers.IO) {
+            try {
+                val items = com.trucdecomptable.ollamachat.data.web.WebSearchClient.search(query, braveApiKey)
+                    .getOrElse { return@withContext SearchOutcome("Erreur de recherche : ${it.message}") }
+                if (items.isEmpty()) {
+                    SearchOutcome("Aucun résultat pour « $query »")
+                } else {
+                    val shown = items.take(5)
+                    SearchOutcome(
+                        text = shown.joinToString("\n") { "${it.title} — ${it.url}\n${it.snippet}" },
+                        urls = shown.map { it.url.trim() },
+                    )
+                }
+            } catch (e: Exception) {
+                SearchOutcome("Erreur d'exécution de web_search : ${e.message ?: "inconnue"}")
+            }
+        }
+
     /**
      * [allowPrivateFetch] lets fetch_url reach the LAN; the repository grants
      * it only for an address the owner typed.
@@ -61,13 +89,7 @@ object ToolExecutor {
             try {
                 val args = JSONObject(argumentsJson)
                 when (name) {
-                    "web_search" -> {
-                        val q = args.optString("query", "")
-                        val items = com.trucdecomptable.ollamachat.data.web.WebSearchClient.search(q, braveApiKey)
-                            .getOrElse { return@withContext "Erreur de recherche : ${it.message}" }
-                        if (items.isEmpty()) "Aucun résultat pour « $q »"
-                        else items.take(5).joinToString("\n") { "${it.title} — ${it.url}\n${it.snippet}" }
-                    }
+                    "web_search" -> webSearch(args.optString("query", ""), braveApiKey).text
                     "fetch_url" -> {
                         val url = args.optString("url", "")
                         com.trucdecomptable.ollamachat.data.web.UrlFetcher.fetch(url, allowPrivate = allowPrivateFetch)

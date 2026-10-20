@@ -51,6 +51,8 @@ class ChatStreamWireTest {
     @Test
     fun `a server that takes the request and never answers is not a network failure`() = runBlocking {
         server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        // The check made before saying so: the server does answer.
+        server.enqueue(MockResponse().setBody("{\"version\":\"0.6.0\"}"))
         // The production client, interceptor included, with a short read timeout.
         val client = OllamaClient(
             streamHttp = OllamaClient.streamClientBuilder().readTimeout(1, TimeUnit.SECONDS).build(),
@@ -58,5 +60,20 @@ class ChatStreamWireTest {
         val result = client.chatStream(url(), "qwen3", question)
 
         assertEquals(ChatErrorCode.NO_FIRST_BYTE, result.error?.code)
+    }
+
+    @Test
+    fun `a connection that took the request but leads nowhere is not called a working network`() = runBlocking {
+        // A pooled connection the tunnel stopped carrying: the request is
+        // written, nothing ever comes back, and the server cannot be reached.
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        // OkHttp retries a dropped connection: every attempt finds it dropped.
+        repeat(3) { server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START)) }
+        val client = OllamaClient(
+            streamHttp = OllamaClient.streamClientBuilder().readTimeout(1, TimeUnit.SECONDS).build(),
+        )
+        val result = client.chatStream(url(), "qwen3", question)
+
+        assertEquals(ChatErrorCode.CONNECT_TIMEOUT, result.error?.code)
     }
 }
