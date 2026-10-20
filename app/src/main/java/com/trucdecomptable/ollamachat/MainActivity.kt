@@ -151,6 +151,7 @@ class MainActivity : FragmentActivity() {
                     LockScreen(
                         biometricAvailable = biometricAvailable.value,
                         lockedUntil = lock.lockedUntil,
+                        pinLength = lock.pinLength,
                         onSubmit = { pin ->
                             // PBKDF2 is intentionally slow: never on the main thread.
                             val ok = withContext(Dispatchers.Default) {
@@ -159,7 +160,11 @@ class MainActivity : FragmentActivity() {
                             if (ok) {
                                 if (PinUtils.needsUpgrade(lock.pinHash)) {
                                     val upgraded = withContext(Dispatchers.Default) { PinUtils.hash(pin) }
-                                    settings.setPinHash(upgraded)
+                                    settings.setPinHash(upgraded, pin.length)
+                                } else if (lock.pinLength == null) {
+                                    // A PIN set before the length was recorded: learn
+                                    // it now, so the pad can auto-submit from here on.
+                                    settings.setPinLength(pin.length)
                                 }
                                 settings.clearFailedUnlocks()
                                 AuthManager.unlock()

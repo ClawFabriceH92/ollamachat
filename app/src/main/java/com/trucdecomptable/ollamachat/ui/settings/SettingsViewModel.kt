@@ -265,8 +265,10 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                 client = container.ollamaClient,
             )
             val text = report.formatted()
-            // Kept in the log too, so it travels with the shared diagnostics.
-            DiagnosticLog.record("réseau", text.replace("\n", " | "))
+            // Kept in the log too, one line per entry: joined into a single
+            // entry it was cut at 400 characters, routing table included.
+            text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+                .forEach { DiagnosticLog.record("réseau", it) }
             transient.update { it.copy(connectivityBusy = false, connectivityReport = text) }
         }
     }
@@ -294,7 +296,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                     testOk = null,
                 )
             }
-            val outcome = NetworkScanner.scanForOllama()
+            val outcome = NetworkScanner.scanForOllama(container.appContext)
             // The swept subnets were computed and then dropped, so a scan that
             // found nothing looked exactly like a scan that never ran. They say
             // which networks the device believes it can reach, which is the
@@ -346,7 +348,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                 pinMessage(R.string.pin_error_wrong_old)
                 return@launch
             }
-            settings.setPinHash(PinUtils.hash(newPin))
+            settings.setPinHash(PinUtils.hash(newPin), newPin.length)
             settings.clearFailedUnlocks()
             pinMessage(R.string.pin_changed)
         }

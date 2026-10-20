@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -18,35 +19,72 @@ object UrlFetcher {
 
     private const val MAX_CHARS = 40000
 
+    /** A fetch the model asked for landed on an address inside a private network. */
+    class PrivateAddressBlocked(host: String) :
+        IOException("adresse de réseau privé refusée ($host)")
+
+    /** Carried on each request so the network interceptor knows what is allowed. */
+    private class Access(val allowPrivate: Boolean)
+
     private val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .callTimeout(45, TimeUnit.SECONDS)
+            // Checked on the address actually connected to, at every hop: this
+            // covers redirects from a public page into the LAN, DNS that
+            // answers a private address, and IP literals alike. Checking the
+            // URL text before the request would miss all three.
+            .addNetworkInterceptor { chain ->
+                val allow = chain.request().tag(Access::class.java)?.allowPrivate ?: false
+                val address = chain.connection()?.route()?.socketAddress?.address
+                if (!allow && address != null && isPrivate(address.address)) {
+                    throw PrivateAddressBlocked(address.hostAddress ?: "?")
+                }
+                chain.proceed(chain.request())
+            }
             .build()
     }
 
-    suspend fun fetch(rawUrl: String): Result<String> = withContext(Dispatchers.IO) {
-        val url = rawUrl.trim()
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            return@withContext Result.failure(IllegalArgumentException("URL invalide — commence par http:// ou https://"))
+    /**
+     * Reads a page.
+     *
+     * [allowPrivate] is for an address the owner typed themselves. When the
+     * model chose the address, the LAN is out of reach: a planted page could
+     * otherwise have it read the router or the Ollama server and pass the
+     * result on.
+     */
+    suspend fun fetch(rawUrl: String, allowPrivate: Boolean = false): Result<String> =
+        withContext(Dispatchers.IO) {
+            val url = rawUrl.trim()
+            if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                return@withContext Result.failure(IllegalArgumentException("URL invalide — commence par http:// ou https://"))
+            }
+            try {
+                val direct = tryDirect(url, allowPrivate)
+                if (direct != null) return@withContext Result.success(truncate(direct, url))
+                // The reader service sees the full address. A private one would
+                // only leak the layout of the LAN without any chance of success.
+                if (isPrivateLiteral(url)) {
+                    return@withContext Result.failure(IllegalStateException("Impossible de lire la page"))
+                }
+                val viaReader = tryReader(url)
+                    ?: return@withContext Result.failure(IllegalStateException("Impossible de lire la page (site protégé ?)"))
+                Result.success(truncate(viaReader, url))
+            } catch (e: PrivateAddressBlocked) {
+                // Final: falling back to the reader would hand it the address.
+                Result.failure(e)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
         }
-        try {
-            val direct = tryDirect(url)
-            if (direct != null) return@withContext Result.success(truncate(direct, url))
-            val viaReader = tryReader(url)
-                ?: return@withContext Result.failure(IllegalStateException("Impossible de lire la page (site protégé ?)"))
-            Result.success(truncate(viaReader, url))
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
 
-    private fun tryDirect(url: String): String? {
+    private fun tryDirect(url: String, allowPrivate: Boolean): String? {
         return try {
             val req = Request.Builder()
                 .url(url)
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36")
+                .tag(Access::class.java, Access(allowPrivate))
                 .get()
                 .build()
             http.newCall(req).execute().use { resp ->
@@ -55,8 +93,47 @@ object UrlFetcher {
                 val text = stripHtml(body)
                 if (text.isBlank() || text.length < 200) null else text
             }
+        } catch (e: PrivateAddressBlocked) {
+            throw e
         } catch (_: Exception) {
             null
+        }
+    }
+
+    /** True for an IP literal host inside a private range; hostnames are unknown. */
+    internal fun isPrivateLiteral(url: String): Boolean {
+        val host = runCatching { java.net.URI(url).host }.getOrNull() ?: return false
+        val parts = host.split(".")
+        if (parts.size != 4) return false
+        val bytes = parts.map { it.toIntOrNull() ?: return false }
+        if (bytes.any { it !in 0..255 }) return false
+        return isPrivate(ByteArray(4) { bytes[it].toByte() })
+    }
+
+    /**
+     * Loopback, RFC 1918, link-local, carrier-grade NAT, the unspecified
+     * address, IPv6 unique-local and link-local, and IPv4-mapped forms of all
+     * of them. An address of unknown family is refused.
+     */
+    internal fun isPrivate(ip: ByteArray): Boolean {
+        val b = ip.map { it.toInt() and 0xFF }
+        if (b.size == 16) {
+            val mapped = (0 until 10).all { b[it] == 0 } && b[10] == 0xFF && b[11] == 0xFF
+            if (mapped) return isPrivate(ip.copyOfRange(12, 16))
+            if (b.all { it == 0 }) return true
+            if ((0 until 15).all { b[it] == 0 } && b[15] == 1) return true
+            if ((b[0] and 0xFE) == 0xFC) return true
+            if (b[0] == 0xFE && (b[1] and 0xC0) == 0x80) return true
+            return false
+        }
+        if (b.size != 4) return true
+        return when {
+            b[0] == 0 || b[0] == 10 || b[0] == 127 -> true
+            b[0] == 169 && b[1] == 254 -> true
+            b[0] == 172 && b[1] in 16..31 -> true
+            b[0] == 192 && b[1] == 168 -> true
+            b[0] == 100 && b[1] in 64..127 -> true
+            else -> false
         }
     }
 

@@ -45,8 +45,16 @@ object UpdateChecker {
     sealed interface CheckResult {
         data class Available(val info: UpdateInfo) : CheckResult
         data object UpToDate : CheckResult
-        data class Unreachable(val reason: String) : CheckResult
+        /**
+         * [answered]: something at GitHub replied, even with a refusal or a
+         * missing file. The network works then, and blaming a tunnel for it
+         * would be wrong.
+         */
+        data class Unreachable(val reason: String, val answered: Boolean = false) : CheckResult
     }
+
+    /** GitHub answered with a status that is not a success. */
+    class HttpStatusException(val code: Int, reason: String) : IOException(reason)
 
     /** Looks for a release newer than [installed]. */
     suspend fun check(installed: String = BuildConfig.VERSION_NAME): CheckResult =
@@ -66,9 +74,23 @@ object UpdateChecker {
                 ?.let { parseApi(it, installed) }
                 ?.let { return@withContext it }
 
-            val cause = manifest.exceptionOrNull() ?: api.exceptionOrNull()
-            CheckResult.Unreachable(cause?.let { describe(it) } ?: "réponse illisible")
+            failureVerdict(manifest, api)
         }
+
+    /**
+     * Why neither source gave an answer, and whether anything answered at all.
+     *
+     * A network failure explains everything. Failing that, the API's answer
+     * (a quota, a refusal) says more than the manifest's 404, which used to
+     * win and hide the quota message entirely.
+     */
+    internal fun failureVerdict(manifest: Result<String>, api: Result<String>): CheckResult.Unreachable {
+        val failures = listOfNotNull(manifest.exceptionOrNull(), api.exceptionOrNull())
+        val network = failures.firstOrNull { it !is HttpStatusException }
+        val cause = network ?: api.exceptionOrNull() ?: manifest.exceptionOrNull()
+        val answered = manifest.isSuccess || api.isSuccess || failures.any { it is HttpStatusException }
+        return CheckResult.Unreachable(cause?.let { describe(it) } ?: "réponse illisible", answered)
+    }
 
     private fun fetch(url: String, github: Boolean): String {
         val conn = URL(url).openConnection() as HttpURLConnection
@@ -80,7 +102,7 @@ object UpdateChecker {
             if (github) conn.setRequestProperty("Accept", "application/vnd.github+json")
             val code = conn.responseCode
             if (code != HttpURLConnection.HTTP_OK) {
-                throw IOException(httpReason(code, conn.getHeaderField("x-ratelimit-remaining")))
+                throw HttpStatusException(code, httpReason(code, conn.getHeaderField("x-ratelimit-remaining")))
             }
             return conn.inputStream.bufferedReader().use { it.readText() }
         } finally {

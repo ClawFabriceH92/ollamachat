@@ -105,6 +105,14 @@ class LogExpertTest {
     }
 
     @Test
+    fun `github answering with an error is not a network failure`() {
+        // "GitHub a répondu" means something replied: blaming the tunnel's
+        // missing way out for it was a confident wrong answer.
+        val findings = LogExpert.analyze(listOf(entry("update", "GitHub a répondu : HTTP 502")))
+        assertTrue(findings.toString(), findings.none { it.title.contains("mise à jour n'aboutissent") })
+    }
+
+    @Test
     fun `blocking findings come before warnings`() {
         val findings = LogExpert.analyze(
             listOf(

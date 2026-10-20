@@ -47,7 +47,16 @@ object ToolExecutor {
         ),
     )
 
-    suspend fun execute(name: String, argumentsJson: String, braveApiKey: String = ""): String =
+    /**
+     * [allowPrivateFetch] lets fetch_url reach the LAN; the repository grants
+     * it only for an address the owner typed.
+     */
+    suspend fun execute(
+        name: String,
+        argumentsJson: String,
+        braveApiKey: String = "",
+        allowPrivateFetch: Boolean = false,
+    ): String =
         withContext(Dispatchers.IO) {
             try {
                 val args = JSONObject(argumentsJson)
@@ -61,7 +70,7 @@ object ToolExecutor {
                     }
                     "fetch_url" -> {
                         val url = args.optString("url", "")
-                        com.trucdecomptable.ollamachat.data.web.UrlFetcher.fetch(url)
+                        com.trucdecomptable.ollamachat.data.web.UrlFetcher.fetch(url, allowPrivate = allowPrivateFetch)
                             .getOrElse { "Erreur de lecture : ${it.message}" }
                     }
                     "get_current_time" -> SimpleDateFormat(

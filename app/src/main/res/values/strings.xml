@@ -19,6 +19,7 @@
     <string name="action_copy_code">Copier le code</string>
     <string name="action_edit">Modifier</string>
     <string name="action_regenerate">Régénérer</string>
+    <string name="action_retry">Réessayer</string>
     <string name="action_archive">Archiver</string>
     <string name="action_restore">Restaurer</string>
     <string name="action_search">Rechercher</string>
@@ -85,6 +86,7 @@
     <!-- Toasts -->
     <string name="toast_busy">Réponse en cours — patiente un instant</string>
     <string name="toast_stopped">Réponse interrompue — le texte généré est conservé</string>
+    <string name="toast_conversation_expired">Conversation éphémère expirée : elle a été supprimée.</string>
     <string name="toast_searching">Recherche web en cours…</string>
     <string name="toast_search_empty">Recherche infructueuse — essaie une autre formulation</string>
     <string name="toast_reading_page">Lecture de la page…</string>
@@ -99,6 +101,8 @@
     <!-- Errors -->
     <string name="error_connection">Serveur injoignable — vérifie l’adresse et le réseau</string>
     <string name="error_connect_timeout">Connexion impossible à %1$s — aucune réponse. Serveur éteint, ou réseau qui bloque le passage (VPN, pare-feu).</string>
+    <string name="error_tool_loop_limit">Limite d’étapes d’outils atteinte sans réponse. Augmente « Étapes maximum par message » dans les réglages (Agent).</string>
+    <string name="error_no_first_byte">Connecté à %1$s, mais aucun premier mot en 10 minutes : modèle en cours de chargement, prompt très long ou serveur occupé par une autre requête. Le réseau, lui, fonctionne.</string>
     <string name="error_timeout">Le serveur met trop de temps à répondre</string>
     <string name="error_http">Le serveur a refusé la requête (%1$s)</string>
     <string name="error_server">Erreur du serveur : %1$s</string>
@@ -125,7 +129,7 @@
     <string name="settings_server_url_hint">http://192.168.1.50:11434</string>
     <string name="settings_scan">Détecter automatiquement un serveur Ollama</string>
     <string name="settings_scanning">Scan du réseau en cours…</string>
-    <string name="scan_none">Aucun serveur trouvé. Sous-réseaux balayés : %1$s. Si celui de ton serveur n’y figure pas, le réseau de l’appareil ne l’atteint pas — un tunnel VPN qui ne route pas le réseau local donne exactement cela.</string>
+    <string name="scan_none">Aucun serveur trouvé. Sous-réseaux balayés : %1$s. Si celui de ton serveur n’y figure pas, l’appareil n’a pas de route dédiée vers lui et le scan ne peut pas le deviner : saisis l’adresse à la main, puis lance « Tester la connectivité » pour voir par où partent ses paquets.</string>
     <string name="scan_none_no_subnet">Aucun serveur trouvé, et aucun sous-réseau à balayer : l’appareil ne voit aucun réseau local exploitable.</string>
     <string name="settings_test">Tester la connexion</string>
     <string name="settings_testing">Test…</string>

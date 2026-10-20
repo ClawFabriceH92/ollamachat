@@ -58,12 +58,14 @@ data class ModelCapabilities(
 enum class ChatErrorCode {
     CONNECTION,     // server unreachable
     CONNECT_TIMEOUT,// nothing answered at all; detail carries the address
+    NO_FIRST_BYTE,  // connected, but no first token in time; detail carries the address
     TIMEOUT,        // server reachable but too slow
     HTTP,           // non-2xx without a usable body
     SERVER,         // Ollama reported an error (detail carries its text)
     EMPTY,          // no content at all
     NO_MODEL,       // no model selected
     NO_CONVERSATION,
+    TOOL_LOOP_LIMIT,// the step budget ran out before the model answered
     UNKNOWN,
 }
 

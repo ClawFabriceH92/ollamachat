@@ -81,6 +81,19 @@ interface ConversationDao {
         """
     )
     suspend fun listExpired(now: Long): List<Conversation>
+
+    /**
+     * Deletes [id] only if its countdown has still run out at [now]. A send
+     * may have restarted it between the listing and the delete; checking in
+     * the same statement closes that window. Returns the rows deleted.
+     */
+    @Query(
+        """
+        DELETE FROM conversations
+        WHERE id = :id AND ephemeralMinutes > 0 AND (updatedAt + ephemeralMinutes * 60000) <= :now
+        """
+    )
+    suspend fun deleteIfExpired(id: Long, now: Long): Int
 }
 
 @Dao
@@ -133,6 +146,29 @@ interface MessageDao {
     )
     suspend fun lastAssistant(conversationId: Long): Message?
 
+    /** The last question, whether or not it was answered or summarised since. */
+    @Query(
+        """
+        SELECT * FROM messages
+        WHERE conversationId = :conversationId AND role = 'user'
+        ORDER BY createdAt DESC, id DESC LIMIT 1
+        """
+    )
+    suspend fun lastUser(conversationId: Long): Message?
+
+    /**
+     * The replies to a question: assistant text and tool traces after it.
+     * Never a user row, and never a system row — a compaction summary written
+     * during that turn stands for messages that stay hidden.
+     */
+    @Query(
+        """
+        DELETE FROM messages
+        WHERE conversationId = :conversationId AND id > :afterId AND role IN ('assistant', 'tool')
+        """
+    )
+    suspend fun deleteRepliesAfter(conversationId: Long, afterId: Long)
+
     @Insert
     suspend fun insert(m: Message): Long
 
@@ -151,6 +187,21 @@ interface MessageDao {
     /** Deletes [fromId] and every message inserted after it (regenerate / edit). */
     @Query("DELETE FROM messages WHERE conversationId = :conversationId AND id >= :fromId")
     suspend fun deleteFrom(conversationId: Long, fromId: Long)
+
+    /**
+     * Like [deleteFrom], but a compaction summary survives: it replaces
+     * messages that stay hidden, and deleting it would leave them hidden and
+     * unsummarised. Older summaries carry no marker, hence the text match.
+     */
+    @Query(
+        """
+        DELETE FROM messages
+        WHERE conversationId = :conversationId AND id >= :fromId
+          AND NOT (role = 'system'
+                   AND (contentType = 'summary' OR content LIKE 'Contexte compacté automatiquement%'))
+        """
+    )
+    suspend fun deleteFromKeepingSummaries(conversationId: Long, fromId: Long)
 
     @Query("SELECT imagePath FROM messages WHERE conversationId = :conversationId AND imagePath IS NOT NULL")
     suspend fun imagePathsFor(conversationId: Long): List<String?>

@@ -26,12 +26,15 @@ import com.trucdecomptable.ollamachat.data.tools.ToolPolicy
 import com.trucdecomptable.ollamachat.util.DiagnosticLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
@@ -47,6 +50,11 @@ class ChatRepository(
     private val db: AppDatabase,
     private val settings: SettingsRepository,
     private val client: OllamaClient,
+    /** MCP access, injectable so tests can offer real tools instead of names never listed. */
+    private val mcpListTools: suspend (String) -> Result<List<McpClient.McpTool>> = { McpClient.listTools(it) },
+    private val mcpCallTool: suspend (String, String, String) -> Result<String> =
+        { url, name, args -> McpClient.callTool(url, name, args) },
+    private val approvalTimeoutMs: Long = ToolPolicy.APPROVAL_TIMEOUT_MS,
     private val imageProvider: ImageProvider = ImageProvider { ImageStore.readBase64(it) },
 ) {
     /** Indirection so tests do not need Android's Base64. */
@@ -62,6 +70,14 @@ class ChatRepository(
 
     @Volatile
     var isSending: Boolean = false
+        private set
+
+    /**
+     * The conversation a turn is running in, if any. The ephemeral purge skips
+     * it, and deleting it stops the turn first.
+     */
+    @Volatile
+    var activeConversationId: Long? = null
         private set
 
     /** What one turn ended up producing. */
@@ -101,6 +117,44 @@ class ChatRepository(
     }
 
     /**
+     * Runs one turn in the repository's scope and reports it exactly once.
+     *
+     * The three entry points used to repeat this by hand. Kept in one place it
+     * also restarts the ephemeral countdown when a turn starts and again when
+     * it ends, whatever the ending: on a slow model a turn can outlast the
+     * countdown, and the purge must not take a conversation from under its
+     * own answer.
+     */
+    private fun launchTurn(
+        conversationId: Long,
+        onResult: (finalText: String?, statsLine: String?, error: ChatError?, cancelled: Boolean) -> Unit,
+        block: suspend () -> TurnOutcome,
+    ) {
+        if (isSending) return
+        setSending(true)
+        activeConversationId = conversationId
+        sendJob = scope.launch {
+            val outcome = try {
+                db.conversationDao().touch(conversationId)
+                block()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                TurnOutcome(error = ChatError(ChatErrorCode.UNKNOWN, e.message))
+            } finally {
+                withContext(NonCancellable) {
+                    runCatching { db.conversationDao().touch(conversationId) }
+                }
+                activeConversationId = null
+                // Released before the caller is told the turn ended: otherwise
+                // a send issued straight from the callback is refused as busy.
+                setSending(false)
+            }
+            outcome.report(onResult)
+        }
+    }
+
+    /**
      * @param onDelta    called with each streaming piece (UI only)
      * @param onThinking called with each reasoning piece, when the model emits any
      * @param onResult   called exactly once when the round-trip ends
@@ -112,68 +166,42 @@ class ChatRepository(
         onDelta: (String) -> Unit = {},
         onThinking: (String) -> Unit = {},
         onResult: (finalText: String?, statsLine: String?, error: ChatError?, cancelled: Boolean) -> Unit,
-    ) {
-        if (isSending) return
-        setSending(true)
-        sendJob = scope.launch {
-            val outcome = try {
-                db.messageDao().insert(
-                    Message(
-                        conversationId = conversationId,
-                        role = "user",
-                        content = content,
-                        contentType = if (imagePaths.isNotEmpty()) "image" else "text",
-                        imagePaths = imagePathsOf(imagePaths),
-                    )
-                )
-                // Restarts the ephemeral countdown: a conversation in use must
-                // not expire mid-exchange.
-                db.conversationDao().touch(conversationId)
-                runTurn(conversationId, content, onDelta, onThinking)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                TurnOutcome(error = ChatError(ChatErrorCode.UNKNOWN, e.message))
-            } finally {
-                // Released before the caller is told the turn ended: otherwise
-                // a send issued straight from the callback is refused as busy.
-                setSending(false)
-            }
-            outcome.report(onResult)
-        }
+    ) = launchTurn(conversationId, onResult) {
+        db.messageDao().insert(
+            Message(
+                conversationId = conversationId,
+                role = "user",
+                content = content,
+                contentType = if (imagePaths.isNotEmpty()) "image" else "text",
+                imagePaths = imagePathsOf(imagePaths),
+            )
+        )
+        runTurn(conversationId, content, onDelta, onThinking)
     }
 
     /**
-     * Drops the last assistant answer (and anything after it) and asks again
-     * from the same history.
+     * Answers the last question again.
+     *
+     * Only the replies to that question go — assistant text and tool traces
+     * after it. The question stays, and so does any system row after it, such
+     * as a compaction summary. It used to delete from the last assistant
+     * answer onwards, so after a failed turn (a question with no reply) it
+     * deleted the previous answer and the unanswered question with it. With
+     * nothing after the question, this is simply a retry.
      */
     fun regenerate(
         conversationId: Long,
         onDelta: (String) -> Unit = {},
         onThinking: (String) -> Unit = {},
         onResult: (finalText: String?, statsLine: String?, error: ChatError?, cancelled: Boolean) -> Unit,
-    ) {
-        if (isSending) return
-        setSending(true)
-        sendJob = scope.launch {
-            val outcome = try {
-                val last = db.messageDao().lastAssistant(conversationId)
-                if (last != null) db.messageDao().deleteFrom(conversationId, last.id)
-                val prompt = db.messageDao().listForContext(conversationId)
-                    .lastOrNull { it.role == "user" }?.content.orEmpty()
-                runTurn(conversationId, prompt, onDelta, onThinking)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                TurnOutcome(error = ChatError(ChatErrorCode.UNKNOWN, e.message))
-            } finally {
-                setSending(false)
-            }
-            outcome.report(onResult)
-        }
+    ) = launchTurn(conversationId, onResult) {
+        val question = db.messageDao().lastUser(conversationId)
+            ?: return@launchTurn TurnOutcome(error = ChatError(ChatErrorCode.EMPTY))
+        db.messageDao().deleteRepliesAfter(conversationId, question.id)
+        runTurn(conversationId, question.content, onDelta, onThinking)
     }
 
-    /** Rewrites a user message, drops everything after it, and asks again. */
+    /** Rewrites a user message, drops what followed it, and asks again. */
     fun editAndResend(
         conversationId: Long,
         messageId: Long,
@@ -181,32 +209,19 @@ class ChatRepository(
         onDelta: (String) -> Unit = {},
         onThinking: (String) -> Unit = {},
         onResult: (finalText: String?, statsLine: String?, error: ChatError?, cancelled: Boolean) -> Unit,
-    ) {
-        if (isSending) return
-        setSending(true)
-        sendJob = scope.launch {
-            val outcome = try {
-                val original = db.messageDao().getById(messageId)
-                db.messageDao().deleteFrom(conversationId, messageId)
-                db.messageDao().insert(
-                    Message(
-                        conversationId = conversationId,
-                        role = "user",
-                        content = newContent,
-                        contentType = original?.contentType ?: "text",
-                        imagePaths = original?.imagePaths,
-                    )
-                )
-                runTurn(conversationId, newContent, onDelta, onThinking)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                TurnOutcome(error = ChatError(ChatErrorCode.UNKNOWN, e.message))
-            } finally {
-                setSending(false)
-            }
-            outcome.report(onResult)
-        }
+    ) = launchTurn(conversationId, onResult) {
+        val original = db.messageDao().getById(messageId)
+        db.messageDao().deleteFromKeepingSummaries(conversationId, messageId)
+        db.messageDao().insert(
+            Message(
+                conversationId = conversationId,
+                role = "user",
+                content = newContent,
+                contentType = original?.contentType ?: "text",
+                imagePaths = original?.imagePaths,
+            )
+        )
+        runTurn(conversationId, newContent, onDelta, onThinking)
     }
 
     /** One full request/tool-loop/persist cycle over the current history. */
@@ -267,17 +282,37 @@ class ChatRepository(
         }
 
         // 3. Tool-calling loop.
+        //
+        // Up to loopMax rounds may call tools. One more round then runs with no
+        // tool offered, so the results of the last calls still reach the model
+        // and it answers with what it has. Stopping at loopMax used to throw
+        // those results away and end on an empty answer — or on a duplicate
+        // bubble, the last preamble saved twice.
+        val mcpServers = settings.mcpServers.first()
+        val mcpPrefixes = mcpServers.map { it.name }
+        val turn = ToolTurn(
+            offered = tools.map { it.name }.toSet(),
+            trustedUrls = trustedUrlsIn(history).toMutableSet(),
+            typedUrls = typedUrlsIn(history),
+        )
         var working = messages
+        var offeredNow = tools
         var result: ChatStreamResult? = null
-        val loopMax = if (turbo) 1 else settings.toolLoopMax.first()
-        for (iteration in 0 until loopMax) {
+        var hitLimit = false
+        val loopMax = if (turbo) 0 else settings.toolLoopMax.first()
+        for (iteration in 0..loopMax) {
+            val lastRound = iteration == loopMax
+            if (lastRound && iteration > 0) {
+                hitLimit = true
+                working = working + OllamaChatMessage(role = "system", content = STEP_LIMIT_NOTICE)
+            }
             val round = client.chatStream(
                 baseUrl = baseUrl,
                 model = model,
                 messages = working,
                 options = options,
                 keepAlive = keepAlive,
-                tools = tools,
+                tools = if (lastRound) emptyList() else offeredNow,
                 think = think,
                 onDelta = onDelta,
                 onThinking = onThinking,
@@ -297,7 +332,9 @@ class ChatRepository(
                     cancelled = true,
                 )
             }
-            if (round.toolCalls.isEmpty()) break
+            // On the last round no tool was offered: a call written anyway is
+            // ignored, and the text is the answer.
+            if (round.toolCalls.isEmpty() || lastRound) break
 
             // Text written before the tool call is part of the answer: persist
             // it now so it keeps its place in the transcript.
@@ -312,10 +349,13 @@ class ChatRepository(
                 )
             }
 
-            val mcpServers = settings.mcpServers.first()
-            val toolMessages = mutableListOf<OllamaChatMessage>()
+            // One assistant message carries every call of the round, with the
+            // text that came with them, as the model produced it.
+            val toolMessages = mutableListOf(
+                OllamaChatMessage(role = "assistant", content = round.fullText, toolCalls = round.toolCalls)
+            )
             round.toolCalls.forEach { tc ->
-                val output = runTool(tc, mcpServers, braveKey)
+                val outcome = runTool(tc, mcpServers, braveKey, turn)
                 // Tool traces are shown to the user but never replayed as
                 // history: the model already saw them in this exchange, and
                 // resending them every turn is what used to blow the context.
@@ -323,24 +363,43 @@ class ChatRepository(
                     Message(
                         conversationId = conversationId,
                         role = "tool",
-                        content = output,
+                        content = outcome.text,
                         toolName = tc.name,
                         excludedFromContext = true,
                     )
                 )
+                // An address a search returned existed before the model could
+                // write anything into it, so reading it cannot leak anything.
+                if (tc.name == "web_search" && !outcome.internal) {
+                    turn.trustedUrls += ToolPolicy.extractUrls(outcome.text)
+                }
                 toolMessages.add(
-                    OllamaChatMessage(role = "assistant", content = "", toolCalls = listOf(tc))
-                )
-                toolMessages.add(
-                    OllamaChatMessage(role = "tool", content = wrapToolOutput(output), toolName = tc.name)
+                    OllamaChatMessage(
+                        role = "tool",
+                        // What the app wrote itself is not foreign data: framing
+                        // "do not call it again" as text to ignore is what made
+                        // the model ask again, and the dialog come back.
+                        content = if (outcome.internal) outcome.text else wrapToolOutput(outcome.text),
+                        toolName = tc.name,
+                    )
                 )
             }
             working = working + toolMessages
+            // A refused MCP tool is not offered again this turn.
+            offeredNow = offeredNow.filterNot {
+                it.name in turn.refused && ToolPolicy.canAlwaysAllow(it.name, mcpPrefixes)
+            }
         }
 
         // 4. Persist the final assistant answer with stats.
         val final = result ?: ChatStreamResult("")
-        if (final.fullText.isBlank()) return TurnOutcome(error = ChatError(ChatErrorCode.EMPTY))
+        if (final.fullText.isBlank()) {
+            // Reasoning without an answer is kept rather than lost.
+            persistAssistant(conversationId, final, userContent)
+            return TurnOutcome(
+                error = ChatError(if (hitLimit) ChatErrorCode.TOOL_LOOP_LIMIT else ChatErrorCode.EMPTY)
+            )
+        }
         persistAssistant(conversationId, final, userContent)
         return TurnOutcome(text = final.fullText, stats = final.statsLine())
     }
@@ -373,47 +432,88 @@ class ChatRepository(
         )
     }
 
-    /** Sent back to the model so a refusal ends the attempt instead of looping. */
-    private val refused =
-        "Refusé par l'utilisateur : l'outil n'a pas été exécuté. Ne le rappelle pas ; " +
-            "poursuis sans lui, ou explique ce qu'il te manque."
+    /** What one turn has learnt about its tools so far. */
+    private class ToolTurn(
+        val offered: Set<String>,
+        /** Addresses fetch_url may reach unasked: typed by the owner, or returned by a search. */
+        val trustedUrls: MutableSet<String>,
+        /** Addresses the owner typed; only these may reach the LAN. */
+        val typedUrls: Set<String>,
+    ) {
+        /** Refused once this turn: refused again without asking. */
+        val refused = mutableSetOf<String>()
+
+        /** Set once a request went unanswered: nobody is there, nothing more is asked. */
+        var ownerAbsent = false
+    }
+
+    /** A tool's answer, and whether the app wrote it itself rather than relaying foreign data. */
+    private data class ToolOutcome(val text: String, val internal: Boolean = false)
 
     private suspend fun runTool(
         tc: ToolCall,
         mcpServers: List<McpServer>,
         braveKey: String,
-    ): String {
+        turn: ToolTurn,
+    ): ToolOutcome {
+        // A name the model was never offered is not a question for the owner:
+        // the model is told what exists, nothing is asked, and nothing can end
+        // up allowed "always" under an invented name.
+        if (tc.name !in turn.offered) {
+            DiagnosticLog.record("outil", "${tc.name} non proposé au modèle")
+            return ToolOutcome(
+                "Outil inexistant : « ${tc.name} ». Outils disponibles : " +
+                    turn.offered.sorted().joinToString(", ") + ". N'en invente pas d'autre.",
+                internal = true,
+            )
+        }
         val prefixes = mcpServers.map { it.name }
         // Re-read per call: saying "always" mid-turn has to take effect now,
         // not on the next message.
         val gateEnabled = settings.toolApprovalEnabled.first()
         val allowed = settings.toolAllowlist.first()
-        if (ToolPolicy.needsApproval(tc.name, prefixes, gateEnabled, allowed)) {
-            val decision = withTimeoutOrNull(ToolPolicy.APPROVAL_TIMEOUT_MS) {
+        if (ToolPolicy.needsApproval(tc.name, tc.arguments, prefixes, gateEnabled, allowed, turn.trustedUrls)) {
+            // Asked once per turn. Without this the model, refused, simply asked
+            // again, and the owner had to refuse the same thing up to loopMax
+            // times; unanswered, it cost two minutes per attempt.
+            if (turn.ownerAbsent || tc.name in turn.refused) return ToolOutcome(REFUSED, internal = true)
+            val alwaysOffered = ToolPolicy.canAlwaysAllow(tc.name, prefixes)
+            val decision = withTimeoutOrNull(approvalTimeoutMs) {
                 approver.request(
                     ApprovalRequest(
                         toolName = tc.name,
                         serverName = ToolPolicy.serverOf(tc.name, prefixes),
                         arguments = tc.arguments,
+                        allowAlways = alwaysOffered,
                     )
                 )
-            } ?: ApprovalDecision.DENY
+            }
             when (decision) {
-                ApprovalDecision.ALWAYS -> settings.allowTool(tc.name)
-                ApprovalDecision.ONCE -> Unit
-                ApprovalDecision.DENY -> {
-                    DiagnosticLog.record("outil", "${tc.name} non autorisé")
-                    return refused
+                null -> {
+                    turn.ownerAbsent = true
+                    turn.refused += tc.name
+                    DiagnosticLog.record("outil", "${tc.name} sans réponse, refusé")
+                    return ToolOutcome(REFUSED, internal = true)
                 }
+                ApprovalDecision.DENY -> {
+                    turn.refused += tc.name
+                    DiagnosticLog.record("outil", "${tc.name} non autorisé")
+                    return ToolOutcome(REFUSED, internal = true)
+                }
+                ApprovalDecision.ALWAYS -> if (alwaysOffered) settings.allowTool(tc.name)
+                ApprovalDecision.ONCE -> Unit
             }
         }
-        return dispatch(tc, mcpServers, braveKey)
+        val url = if (tc.name == "fetch_url") ToolPolicy.urlArgument(tc.arguments) else null
+        val typed = url != null && ToolPolicy.normalizeUrl(url) in turn.typedUrls
+        return ToolOutcome(dispatch(tc, mcpServers, braveKey, allowPrivateFetch = typed).take(MAX_TRACE_CHARS))
     }
 
     private suspend fun dispatch(
         tc: ToolCall,
         mcpServers: List<McpServer>,
         braveKey: String,
+        allowPrivateFetch: Boolean,
     ): String = when {
         tc.name == "save_memory" -> {
             val content = try {
@@ -428,14 +528,34 @@ class ChatRepository(
                 "Contenu vide, rien mémorisé"
             }
         }
-        mcpServers.any { tc.name.startsWith("${it.name}_") } -> {
-            val server = mcpServers.first { tc.name.startsWith("${it.name}_") }
-            val toolName = tc.name.removePrefix("${server.name}_")
-            McpClient.callTool(server.url, toolName, tc.arguments)
-                .getOrElse { "Erreur MCP : ${it.message}" }
+        // Native names first, as the policy classified them: a server whose
+        // name and tool happen to spell a native name must not receive the
+        // call past the gate.
+        tc.name in ToolPolicy.NATIVE ->
+            ToolExecutor.execute(tc.name, tc.arguments, braveKey, allowPrivateFetch)
+        else -> {
+            val serverName = ToolPolicy.serverOf(tc.name, mcpServers.map { it.name })
+            val server = serverName?.let { name -> mcpServers.firstOrNull { it.name == name } }
+            if (server == null) {
+                "Outil inconnu : ${tc.name}"
+            } else {
+                mcpCallTool(server.url, tc.name.removePrefix("${server.name}_"), tc.arguments)
+                    .getOrElse { "Erreur MCP : ${it.message}" }
+            }
         }
-        else -> ToolExecutor.execute(tc.name, tc.arguments, braveKey)
     }
+
+    /** Addresses the owner typed in a question still in context. */
+    private fun typedUrlsIn(history: List<Message>): Set<String> =
+        history.filter { it.role == "user" }
+            .flatMap { ToolPolicy.extractUrls(it.content) }
+            .toSet()
+
+    /** Typed addresses, plus those of search results the app injected itself. */
+    private fun trustedUrlsIn(history: List<Message>): Set<String> =
+        typedUrlsIn(history) + history
+            .filter { it.role == "system" && it.contentType == CONTENT_SEARCH }
+            .flatMap { ToolPolicy.extractUrls(it.content) }
 
     /**
      * Tool output is attacker-controlled as soon as it comes from the web, so
@@ -494,12 +614,20 @@ class ChatRepository(
     /** Loads built-in tools + tools from configured MCP servers (failures ignored). */
     private suspend fun loadTools(): List<ToolDef> {
         val tools = ToolExecutor.nativeToolDefs.toMutableList()
+        val names = tools.map { it.name }.toMutableSet()
         settings.mcpServers.first().forEach { server ->
             try {
-                McpClient.listTools(server.url).getOrNull().orEmpty().forEach { mt ->
+                mcpListTools(server.url).getOrNull().orEmpty().forEach { mt ->
+                    val name = "${server.name}_${mt.name}"
+                    // Two tools under one name would let the model's choice, the
+                    // policy and the dispatch disagree about which one runs.
+                    if (!names.add(name)) {
+                        DiagnosticLog.record("mcp/${server.name}", "outil « $name » ignoré : nom déjà pris")
+                        return@forEach
+                    }
                     tools.add(
                         ToolDef(
-                            name = "${server.name}_${mt.name}",
+                            name = name,
                             description = "[MCP ${server.name}] ${mt.description}",
                             parametersJson = mt.inputSchema,
                         )
@@ -584,36 +712,90 @@ class ChatRepository(
             )
         )
 
-    /** Removes a conversation and the image files its messages referenced. */
     /**
      * Deletes the conversations whose ephemeral countdown has run out.
      * Returns how many were removed.
      */
     suspend fun purgeExpired(now: Long = System.currentTimeMillis()): Int {
-        val expired = db.conversationDao().listExpired(now)
-        expired.forEach { deleteConversation(it.id) }
-        if (expired.isNotEmpty()) {
-            DiagnosticLog.record("ephemeral", "${expired.size} conversation(s) expirée(s) supprimée(s)")
+        var removed = 0
+        db.conversationDao().listExpired(now).forEach { conversation ->
+            // A turn running in it restarted the countdown when it began but can
+            // outlast it on a slow model: its answer would land in nothing.
+            if (conversation.id == activeConversationId) return@forEach
+            // Paths first (the messages go with the row), files last, and only
+            // if the row really went: a send may have restarted the countdown
+            // since the list was read.
+            val images = storedImagesOf(conversation.id)
+            if (db.conversationDao().deleteIfExpired(conversation.id, now) == 1) {
+                images.forEach { ImageStore.delete(it) }
+                removed++
+            }
         }
-        return expired.size
+        if (removed > 0) {
+            DiagnosticLog.record("ephemeral", "$removed conversation(s) expirée(s) supprimée(s)")
+        }
+        return removed
     }
 
     suspend fun setEphemeral(conversationId: Long, minutes: Int) =
         db.conversationDao().setEphemeral(conversationId, minutes)
 
-    private suspend fun deleteImagesOf(conversationId: Long) {
+    private suspend fun storedImagesOf(conversationId: Long): List<String> =
         db.messageDao().imagePathsFor(conversationId)
             .flatMap { it.orEmpty().lineSequence().filter(String::isNotBlank).toList() }
-            .forEach { ImageStore.delete(it) }
+
+    /**
+     * Stops the turn running in [conversationId], if one is. Joined, not just
+     * cancelled: a database write already under way would otherwise land
+     * after the delete and bring the answer back into an emptied conversation.
+     */
+    private suspend fun stopIfActive(conversationId: Long) {
+        if (activeConversationId != conversationId) return
+        client.cancelActiveStream()
+        sendJob?.cancelAndJoin()
     }
 
+    /**
+     * Removes a conversation and the image files its messages referenced,
+     * stopping its turn first.
+     *
+     * Runs in the repository's own scope: the screen that asks usually closes
+     * at once, and a deletion cancelled half-way with it would leave the turn
+     * writing into a conversation that is gone.
+     */
     suspend fun deleteConversation(conversationId: Long) {
-        deleteImagesOf(conversationId)
-        db.conversationDao().deleteById(conversationId)
+        scope.launch {
+            stopIfActive(conversationId)
+            val images = storedImagesOf(conversationId)
+            db.conversationDao().deleteById(conversationId)
+            images.forEach { ImageStore.delete(it) }
+        }.join()
     }
 
     suspend fun clearMessages(conversationId: Long) {
-        deleteImagesOf(conversationId)
-        db.messageDao().deleteForConversation(conversationId)
+        scope.launch {
+            stopIfActive(conversationId)
+            val images = storedImagesOf(conversationId)
+            db.messageDao().deleteForConversation(conversationId)
+            images.forEach { ImageStore.delete(it) }
+        }.join()
+    }
+
+    companion object {
+        /** Sent back to the model so a refusal ends the attempt instead of looping. */
+        private const val REFUSED =
+            "Refusé par l'utilisateur : l'outil n'a pas été exécuté. Ne le rappelle pas ; " +
+                "poursuis sans lui, ou explique ce qu'il te manque."
+
+        /** Sent on the extra round that runs once the step budget is spent. */
+        private const val STEP_LIMIT_NOTICE =
+            "Limite d'étapes d'outils atteinte : réponds maintenant avec les résultats déjà " +
+                "obtenus, sans appeler d'outil."
+
+        /** A tool trace is stored whole up to this; Room rows past ~2 MB break the cursor. */
+        private const val MAX_TRACE_CHARS = 100_000
+
+        /** contentType of the search results the app injects, whose addresses are trusted. */
+        const val CONTENT_SEARCH = "search"
     }
 }

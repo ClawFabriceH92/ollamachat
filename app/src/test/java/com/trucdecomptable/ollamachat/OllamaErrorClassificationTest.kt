@@ -22,13 +22,28 @@ class OllamaErrorClassificationTest {
     private val target = "http://192.168.0.162:11434"
 
     @Test
-    fun `a timeout before any response names the address it could not reach`() {
+    fun `a timeout before any connection names the address it could not reach`() {
         val error = client.classifyCode(
             SocketTimeoutException("failed to connect after 10000ms"),
             target = target,
             responseStarted = false,
+            connected = false,
         )
         assertEquals(ChatErrorCode.CONNECT_TIMEOUT, error.code)
+        assertEquals(target, error.detail)
+    }
+
+    @Test
+    fun `connected but no first token is not a network failure`() {
+        // Ollama holds its headers until the first token: a model loading for
+        // minutes used to be reported as a tunnel dropping packets.
+        val error = client.classifyCode(
+            SocketTimeoutException("timeout"),
+            target = target,
+            responseStarted = false,
+            connected = true,
+        )
+        assertEquals(ChatErrorCode.NO_FIRST_BYTE, error.code)
         assertEquals(target, error.detail)
     }
 
@@ -40,6 +55,14 @@ class OllamaErrorClassificationTest {
             responseStarted = true,
         )
         assertEquals(ChatErrorCode.TIMEOUT, error.code)
+    }
+
+    @Test
+    fun `a tunnel gone down is a connection error, not an unknown one`() {
+        assertEquals(
+            ChatErrorCode.CONNECTION,
+            client.classifyCode(java.net.NoRouteToHostException("no route"), target, responseStarted = false).code,
+        )
     }
 
     @Test

@@ -1,5 +1,7 @@
 package com.trucdecomptable.ollamachat.data.ollama
 
+import android.content.Context
+import android.net.ConnectivityManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -44,9 +46,16 @@ object NetworkScanner {
             .build()
     }
 
-    suspend fun scanForOllama(ports: List<Int> = listOf(11434, 11435)): ScanOutcome =
+    suspend fun scanForOllama(
+        context: Context,
+        ports: List<Int> = listOf(11434, 11435),
+    ): ScanOutcome =
         withContext(Dispatchers.IO) {
-            val networks = findLocalNetworks() + readRoutedNetworks()
+            // Routed networks first: the LAN behind a tunnel is the reason this
+            // exists, and the address cap is otherwise spent on the phone's own
+            // mobile and tunnel subnets before it gets there.
+            val networks = (readRoutedNetworks(context) + findLocalNetworks())
+                .distinctBy { it.ip to it.prefixLength }
             if (networks.isEmpty()) return@withContext ScanOutcome(emptyList(), emptyList())
             val candidates = enumerateCandidates(networks)
             val subnetSummary = networks.map { "${it.ip}/${it.prefixLength}" }.distinct()
@@ -81,42 +90,36 @@ object NetworkScanner {
     }
 
     /**
-     * Reads the kernel routing table (/proc/net/route) to find networks that
-     * are reachable by routing — typically the LAN behind a VPN tunnel, whose
-     * subnet does NOT match any local interface address (e.g. phone has a
-     * 10.8.0.x tunnel IP, server lives on 192.168.0.0/24 behind the tunnel).
+     * Networks reachable through a route rather than an interface address —
+     * typically the LAN behind a VPN tunnel, whose subnet matches no address
+     * of the phone (a 192.168.27.x tunnel address, a server in 192.168.0.0/24).
+     *
+     * Read through ConnectivityManager. This used to read /proc/net/route,
+     * which Android has not let an app read since Android 10: the failure was
+     * swallowed and the LAN behind the tunnel was never scanned at all.
      */
-    private fun readRoutedNetworks(): List<NetworkInfo> {
-        val result = mutableListOf<NetworkInfo>()
-        try {
-            val lines = java.io.File("/proc/net/route").readLines()
-            for (line in lines.drop(1)) {
-                val parts = line.trim().split(Regex("\\s+"))
-                if (parts.size < 8) continue
-                val iface = parts[0]
-                val dest = hexToInt(parts[1]) ?: continue
-                val mask = hexToInt(parts[7]) ?: continue
-                if (dest == 0 || mask == 0) continue // default route or host route
-                val prefix = Integer.bitCount(mask)
-                if (prefix < 8 || prefix > 30) continue
-                val ip = intToIp(dest)
-                result.add(NetworkInfo(ip, prefix, iface.lowercase()))
+    private fun readRoutedNetworks(context: Context): List<NetworkInfo> = runCatching {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+            ?: return@runCatching emptyList()
+        @Suppress("DEPRECATION")
+        cm.allNetworks.toList().flatMap { network ->
+            val link = cm.getLinkProperties(network) ?: return@flatMap emptyList<NetworkInfo>()
+            val iface = link.interfaceName.orEmpty().lowercase()
+            link.routes.mapNotNull { route ->
+                val destination = route.destination
+                val address = destination.address
+                val text = route.toString()
+                when {
+                    route.isDefaultRoute -> null
+                    address !is Inet4Address -> null
+                    // A tunnel's excluded ranges are ways out of it, not networks.
+                    text.contains(" throw") || text.contains(" unreachable") -> null
+                    destination.prefixLength !in 8..30 -> null
+                    else -> address.hostAddress?.let { NetworkInfo(it, destination.prefixLength, iface) }
+                }
             }
-        } catch (_: Exception) {
-            // /proc/net/route unreadable — fall back to interfaces only.
         }
-        return result
-    }
-
-    /** Parses a little-endian hex IPv4 (e.g. "0000A8C0" -> 0xC0A80000). Visible for tests. */
-    internal fun hexToInt(hex: String): Int? {
-        val v = hex.toLongOrNull(16) ?: return null
-        val result = ((v and 0xFFL) shl 24) or
-            (((v shr 8) and 0xFFL) shl 16) or
-            (((v shr 16) and 0xFFL) shl 8) or
-            ((v shr 24) and 0xFFL)
-        return result.toInt()
-    }
+    }.getOrDefault(emptyList())
 
     /** Collects every usable IPv4 interface; physical interfaces first, VPN tunnels last. */
     private fun findLocalNetworks(): List<NetworkInfo> {
