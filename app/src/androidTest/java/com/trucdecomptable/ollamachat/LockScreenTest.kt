@@ -1,6 +1,8 @@
 package com.trucdecomptable.ollamachat
 
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -29,8 +31,21 @@ class LockScreenTest {
     private val okLabel: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.action_ok)
 
-    private fun type(digits: String) =
-        digits.forEach { compose.onNodeWithText(it.toString()).performClick() }
+    /**
+     * The node showing [text], once the screen can be queried again. On a
+     * slow emulator the test activity can briefly leave the resumed state
+     * between two actions; a query made right then finds no Compose
+     * hierarchy at all and fails for a reason that has nothing to do with
+     * the pad.
+     */
+    private fun node(text: String): SemanticsNodeInteraction {
+        compose.waitUntil(timeoutMillis = 10_000) {
+            compose.onAllNodesWithText(text).fetchSemanticsNodes(atLeastOneRootRequired = false).isNotEmpty()
+        }
+        return compose.onNodeWithText(text)
+    }
+
+    private fun type(digits: String) = digits.forEach { node(it.toString()).performClick() }
 
     @Test
     fun aSixDigitPinIsSubmittedWhole() {
@@ -70,7 +85,7 @@ class LockScreenTest {
         compose.waitForIdle()
         assertTrue("soumis sans OK : $submitted", submitted.isEmpty())
 
-        compose.onNodeWithText(okLabel).performClick()
+        node(okLabel).performClick()
         compose.waitUntil(timeoutMillis = 5_000) { submitted.isNotEmpty() }
         assertEquals(listOf("12345"), submitted.toList())
     }
@@ -88,7 +103,7 @@ class LockScreenTest {
             )
         }
         type("1234")
-        compose.onNodeWithText(okLabel).performClick()
+        node(okLabel).performClick()
         compose.waitUntil(timeoutMillis = 5_000) { submitted.isNotEmpty() }
         assertEquals(listOf("1234"), submitted.toList())
     }
