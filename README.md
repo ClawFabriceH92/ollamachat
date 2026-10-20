@@ -9,9 +9,9 @@ Client Android pour serveur **Ollama** — conversations locales et chiffrées, 
 - ✏️ Par message : copier, **modifier et renvoyer**, **régénérer**, supprimer
 - 🖼️ **Plusieurs images par message**, affichées dans la conversation et redimensionnées à l’import
 - ⚡ **Mode turbo** : bascule d’un geste dans la barre du chat, pour privilégier la vitesse
-  (modèle maintenu en mémoire, compaction et outils coupés, contexte réduit aux 6 derniers
-  messages, modèle plus léger au choix). Tes réglages ne sont pas modifiés — c’est une couche
-  de surcharge, couper le turbo les restaure tels quels
+  (modèle maintenu en mémoire, compaction, outils et raisonnement coupés, modèle plus léger
+  au choix). Tes réglages ne sont pas modifiés — c’est une couche de surcharge, couper le
+  turbo les restaure tels quels
 - ⏱️ **Conversations éphémères** : effacement automatique après un délai sans activité
   (5 min à 24 h), réglable par conversation, avec compte à rebours visible. Le compteur
   repart à chaque message
@@ -21,6 +21,9 @@ Client Android pour serveur **Ollama** — conversations locales et chiffrées, 
 - 📦 **Gestion des modèles du serveur** : télécharger (avec progression) et supprimer depuis l’app
 - ⚙️ Réglages : URL serveur + découverte réseau, température, top_p, top_k, max tokens,
   contexte, keep_alive, thème, couleurs dynamiques, compaction automatique du contexte
+- 📏 **Contexte tenu côté app** : prompt système, mémoires, définitions d’outils, historique et
+  sorties d’outils sont comptés contre `num_ctx` ; ce qui ne tient pas est signalé sous la
+  réponse, au lieu d’être coupé en silence par le serveur
 - 📄 Import TXT / PDF / DOCX + images pour les modèles vision
 - 🔒 Verrouillage PIN (PBKDF2 salé, tentatives limitées) ou biométrie, écran masqué dans le multitâche
 - 🌍 Interface en français et en anglais

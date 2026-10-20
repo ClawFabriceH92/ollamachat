@@ -102,6 +102,8 @@
     <string name="error_connection">Serveur injoignable — vérifie l’adresse et le réseau</string>
     <string name="error_connect_timeout">Connexion impossible à %1$s — aucune réponse. Serveur éteint, ou réseau qui bloque le passage (VPN, pare-feu).</string>
     <string name="error_tool_loop_limit">Limite d’étapes d’outils atteinte sans réponse. Augmente « Étapes maximum par message » dans les réglages (Agent).</string>
+    <string name="error_length">Limite de tokens (num_predict) atteinte pendant la réflexion, avant toute réponse. Augmente num_predict dans les réglages, ou coupe le mode réfléchi.</string>
+    <string name="error_no_vision">Le modèle %1$s ne lit pas les images. Choisis un modèle doté de la vision, ou envoie le message sans image.</string>
     <string name="error_no_first_byte">Connecté à %1$s, mais aucun premier mot en 10 minutes : modèle en cours de chargement, prompt très long ou serveur occupé par une autre requête. Le réseau, lui, fonctionne.</string>
     <string name="error_timeout">Le serveur met trop de temps à répondre</string>
     <string name="error_http">Le serveur a refusé la requête (%1$s)</string>
@@ -250,11 +252,11 @@
 
     <!-- Turbo -->
     <string name="turbo_toggle">Mode turbo</string>
-    <string name="turbo_on">Turbo activé — réponses plus rapides, contexte réduit</string>
+    <string name="turbo_on">Turbo activé — réponses plus rapides, sans outils ni réflexion</string>
     <string name="turbo_off">Turbo désactivé</string>
     <string name="settings_section_turbo">Vitesse</string>
     <string name="settings_turbo">Mode turbo</string>
-    <string name="settings_turbo_help">Privilégie la vitesse sur la profondeur. Le modèle reste chargé en mémoire (30 min), la compaction et les outils sont désactivés, le mode réfléchi est coupé, et seuls les 6 derniers messages sont envoyés. Tes réglages ne sont pas modifiés : couper le turbo les restaure tels quels.</string>
+    <string name="settings_turbo_help">Privilégie la vitesse sur la profondeur. Le modèle reste chargé en mémoire (30 min), la compaction et les outils sont désactivés, le mode réfléchi est coupé et l’historique envoyé se limite à ce qui tient dans le contexte. Tes réglages ne sont pas modifiés : couper le turbo les restaure tels quels.</string>
     <string name="settings_turbo_warning">Le modèle oublie le début des longues conversations tant que le turbo est actif.</string>
     <string name="settings_turbo_model">Modèle turbo (optionnel)</string>
     <string name="settings_turbo_model_help">Un modèle plus petit répond nettement plus vite. Laisse vide pour garder le modèle habituel.</string>

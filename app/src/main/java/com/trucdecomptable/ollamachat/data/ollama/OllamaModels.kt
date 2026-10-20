@@ -52,6 +52,11 @@ data class ModelCapabilities(
     val vision: Boolean = false,
     val tools: Boolean = false,
     val thinking: Boolean = false,
+    /**
+     * The server listed them. False when it could not be asked, or is too old
+     * to say: then "no vision" means "unknown", and images are not withheld.
+     */
+    val known: Boolean = true,
 )
 
 /** What went wrong, as a code the UI turns into a localized message. */
@@ -66,6 +71,8 @@ enum class ChatErrorCode {
     NO_MODEL,       // no model selected
     NO_CONVERSATION,
     TOOL_LOOP_LIMIT,// the step budget ran out before the model answered
+    LENGTH,         // num_predict ran out before any answer (reasoning took it all)
+    NO_VISION,      // the question carries images the model cannot see; detail carries the model
     UNKNOWN,
 }
 
@@ -81,15 +88,21 @@ data class ChatStreamResult(
     val promptEvalCount: Int? = null,
     val cancelled: Boolean = false,
     val error: ChatError? = null,
+    /** Ollama stopped at num_predict (done_reason "length"): the answer is cut. */
+    val truncated: Boolean = false,
 ) {
-    /** Short human-readable stats line, e.g. "42 tok/s · 850 tokens". */
+    /**
+     * Short human-readable stats line, e.g. "42 tok/s · 850 tokens". It is
+     * stored with the message, which is what keeps a cut answer marked as
+     * such after the screen is gone.
+     */
     fun statsLine(): String? {
         val tps = tokPerSec
         val n = evalCount
-        if (tps == null && n == null) return null
         val parts = mutableListOf<String>()
         if (tps != null) parts.add("%.0f tok/s".format(tps))
         if (n != null) parts.add("$n tokens")
-        return parts.joinToString(" · ")
+        if (truncated) parts.add("tronquée (limite num_predict)")
+        return parts.joinToString(" · ").ifEmpty { null }
     }
 }

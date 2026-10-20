@@ -33,6 +33,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.runningFold
@@ -70,8 +72,13 @@ data class ChatUiState(
     val turbo: Boolean = false,
     val ephemeralMinutes: Int = 0,
     val lastActivity: Long = 0L,
+    val turboModel: String = "",
 ) {
+    /** The conversation's model: what the picker changes. */
     val activeModel: String get() = conversationModel ?: defaultModel
+
+    /** The model that will actually answer: the turbo model while turbo is on. */
+    val answeringModel: String get() = TurboProfile.model(turbo, turboModel, activeModel)
 }
 
 /**
@@ -169,6 +176,8 @@ class ChatViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
     private val turbo = settings.turboEnabled
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    private val turboModel = settings.turboModel
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
     private val convWithModel = combine(conversation, defaultModel) { c, m -> c to m }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null to "")
 
@@ -177,10 +186,10 @@ class ChatViewModel(
         transient,
         repo.isSendingFlow,
         convWithModel,
-        combine(messageCount, turbo) { total, fast -> total to fast },
+        combine(messageCount, turbo, turboModel) { total, fast, fastModel -> Triple(total, fast, fastModel) },
     ) { msgs, tr, sending, pair, counters ->
         val (conv, defModel) = pair
-        val (total, fast) = counters
+        val (total, fast, fastModel) = counters
         ChatUiState(
             messages = msgs,
             streamingText = tr.streamingText,
@@ -196,6 +205,7 @@ class ChatViewModel(
             toast = tr.toast,
             hasOlderMessages = total > msgs.size,
             turbo = fast,
+            turboModel = fastModel,
             ephemeralMinutes = conv?.ephemeralMinutes ?: 0,
             lastActivity = conv?.updatedAt ?: 0L,
         )
@@ -209,34 +219,30 @@ class ChatViewModel(
     val activeModel: String get() = uiState.value.activeModel
 
     /**
-     * Turbo trades context and tools for latency; see TurboProfile for exactly
-     * what it overrides.
+     * Turbo trades tools and reasoning for latency; see TurboProfile for
+     * exactly what it overrides. The model is warmed up by the watcher in
+     * init, whichever screen the switch was flipped on.
      */
     fun setTurbo(enabled: Boolean) {
-        viewModelScope.launch {
-            settings.setTurboEnabled(enabled)
-            if (enabled) warmUpModel()
-        }
-    }
-
-    /**
-     * Loads the model on the server before the user writes anything, so the
-     * first message does not pay for a cold model.
-     */
-    private suspend fun warmUpModel() {
-        val url = settings.baseUrl.first()
-        val model = settings.turboModel.first().ifBlank { resolveModel() }
-        if (url.isBlank() || model.isBlank()) return
-        container.ollamaClient.warmUp(url, model, TurboProfile.KEEP_ALIVE)
+        viewModelScope.launch { settings.setTurboEnabled(enabled) }
     }
 
     init {
         // The repository is application-scoped and only one chat is on screen,
         // so the live view model is the one that answers.
         repo.approver = approver
+        // Turbo switched on, here or in the settings while this chat waited
+        // underneath: load the model it will answer with, so the first message
+        // does not pay for a cold model. Switched off: release a distinct
+        // turbo model instead of leaving it in memory for half an hour.
+        viewModelScope.launch {
+            settings.turboEnabled.distinctUntilChanged().drop(1).collect { on ->
+                launch { if (on) repo.warmUp(conversationId) else repo.releaseTurboModel(conversationId) }
+            }
+        }
         viewModelScope.launch {
             refreshModels()
-            if (settings.turboEnabled.first()) warmUpModel()
+            if (settings.turboEnabled.first()) repo.warmUp(conversationId)
             // Resolve the model from storage, not from uiState: nothing is
             // collecting it yet at construction time, so it is still empty and
             // capability detection used to silently never run.

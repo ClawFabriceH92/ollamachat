@@ -100,6 +100,8 @@
     <string name="error_connection">Server unreachable — check the address and your network</string>
     <string name="error_connect_timeout">Cannot connect to %1$s — no answer at all. Server down, or the network is blocking it (VPN, firewall).</string>
     <string name="error_tool_loop_limit">Tool step limit reached without an answer. Raise “Maximum steps per message” in the settings (Agent).</string>
+    <string name="error_length">Token limit (num_predict) reached while reasoning, before any answer. Raise num_predict in the settings, or turn thinking mode off.</string>
+    <string name="error_no_vision">The model %1$s cannot read images. Pick a model with vision, or send the message without an image.</string>
     <string name="error_no_first_byte">Connected to %1$s, but no first word in 10 minutes: the model is loading, the prompt is very long, or the server is busy with another request. The network itself works.</string>
     <string name="error_timeout">The server is taking too long to answer</string>
     <string name="error_http">The server rejected the request (%1$s)</string>
@@ -248,11 +250,11 @@
 
     <!-- Turbo -->
     <string name="turbo_toggle">Turbo mode</string>
-    <string name="turbo_on">Turbo on — faster answers, shorter context</string>
+    <string name="turbo_on">Turbo on — faster answers, no tools or thinking</string>
     <string name="turbo_off">Turbo off</string>
     <string name="settings_section_turbo">Speed</string>
     <string name="settings_turbo">Turbo mode</string>
-    <string name="settings_turbo_help">Favours speed over depth. The model stays loaded in memory (30 min), compaction and tools are disabled, thinking mode is off, and only the last 6 messages are sent. Your settings are untouched: turning turbo off restores them exactly.</string>
+    <string name="settings_turbo_help">Favours speed over depth. The model stays loaded in memory (30 min), compaction and tools are disabled, thinking mode is off, and the history sent is limited to what fits in the context. Your settings are untouched: turning turbo off restores them exactly.</string>
     <string name="settings_turbo_warning">The model forgets the start of long conversations while turbo is on.</string>
     <string name="settings_turbo_model">Turbo model (optional)</string>
     <string name="settings_turbo_model_help">A smaller model answers markedly faster. Leave empty to keep your usual one.</string>

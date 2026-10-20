@@ -24,6 +24,7 @@ import com.trucdecomptable.ollamachat.data.tools.ToolExecutor
 import com.trucdecomptable.ollamachat.data.ollama.ToolDef
 import com.trucdecomptable.ollamachat.data.prefs.SettingsRepository
 import com.trucdecomptable.ollamachat.data.repo.ChatRepository
+import com.trucdecomptable.ollamachat.data.repo.ContextBudget
 import com.trucdecomptable.ollamachat.data.repo.TurboProfile
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -53,6 +54,8 @@ class ChatRepositoryTest {
     private class FakeClient(
         private val script: MutableList<ChatStreamResult>,
         private val capabilities: ModelCapabilities = ModelCapabilities(tools = true),
+        /** Overrides [capabilities] with a failure, as on a network that drops /api/show. */
+        private val capabilitiesResult: Result<ModelCapabilities>? = null,
     ) : OllamaClient() {
 
         val requests = mutableListOf<List<OllamaChatMessage>>()
@@ -62,11 +65,17 @@ class ChatRepositoryTest {
         val thinkSeen = mutableListOf<Boolean?>()
         val modelsSeen = mutableListOf<String>()
         var compactionRan = false
+        var compactionCalls = 0
+        var compactionThink: Boolean? = null
+        var compactionResult: Result<String> = Result.success("Résumé des échanges précédents.")
+        var capabilityCalls = 0
         var cancelled = false
         var onBeforeAnswer: (() -> Unit)? = null
 
-        override suspend fun modelCapabilities(baseUrl: String, model: String): Result<ModelCapabilities> =
-            Result.success(capabilities)
+        override suspend fun modelCapabilities(baseUrl: String, model: String): Result<ModelCapabilities> {
+            capabilityCalls++
+            return capabilitiesResult ?: Result.success(capabilities)
+        }
 
         override suspend fun chatStream(
             baseUrl: String,
@@ -101,7 +110,9 @@ class ChatRepositoryTest {
             think: Boolean?,
         ): Result<String> {
             compactionRan = true
-            return Result.success("Résumé des échanges précédents.")
+            compactionCalls++
+            compactionThink = think
+            return compactionResult
         }
 
         var onCancel: (() -> Unit)? = null
@@ -113,7 +124,10 @@ class ChatRepositoryTest {
     }
 
     /** An MCP server the repository can list and call; every call is recorded. */
-    private class FakeMcp(private val tools: List<String>) {
+    private class FakeMcp(
+        private val tools: List<String>,
+        private val output: (String) -> String = { "résultat de $it" },
+    ) {
         val calls = mutableListOf<Pair<String, String>>()
 
         fun list(): Result<List<McpClient.McpTool>> =
@@ -121,7 +135,7 @@ class ChatRepositoryTest {
 
         fun call(name: String, args: String): Result<String> {
             calls += name to args
-            return Result.success("résultat de $name")
+            return Result.success(output(name))
         }
     }
 
@@ -151,6 +165,7 @@ class ChatRepositoryTest {
             settings.setBaseUrl("http://localhost:11434")
             settings.setModel("qwen3")
             settings.setNumCtx(8192)
+            settings.setNumPredict(4096)
             settings.setToolsEnabled(true)
             settings.setContextCompactEnabled(false)
             settings.setThinkEnabled(false)
@@ -175,6 +190,7 @@ class ChatRepositoryTest {
         approvalTimeoutMs: Long = ToolPolicy.APPROVAL_TIMEOUT_MS,
         search: suspend (String, String) -> ToolExecutor.SearchOutcome =
             { _, _ -> ToolExecutor.SearchOutcome("Aucun résultat") },
+        images: ChatRepository.ImageProvider = ChatRepository.ImageProvider { null },
     ) = ChatRepository(
         db,
         settings,
@@ -183,7 +199,8 @@ class ChatRepositoryTest {
         mcpCallTool = { _, name, args -> mcp?.call(name, args) ?: Result.failure(IllegalStateException("pas de MCP")) },
         approvalTimeoutMs = approvalTimeoutMs,
         webSearch = search,
-    ) { null }
+        imageProvider = images,
+    )
 
     /** Configures a server named [name] whose tools the fake [mcp] serves. */
     private suspend fun withServer(name: String = "fichiers") =
@@ -197,10 +214,11 @@ class ChatRepositoryTest {
         repo: ChatRepository,
         conversationId: Long,
         text: String = "Bonjour",
+        imagePaths: List<String> = emptyList(),
     ): Result4 {
         val latch = CountDownLatch(1)
         var captured = Result4()
-        repo.send(conversationId, text) { finalText, stats, error, cancelled ->
+        repo.send(conversationId, text, imagePaths) { finalText, stats, error, cancelled ->
             captured = Result4(finalText, stats, error, cancelled)
             latch.countDown()
         }
@@ -762,24 +780,46 @@ class ChatRepositoryTest {
         assertFalse("la compaction a tourné", client.compactionRan)
         assertEquals(false, client.thinkSeen.single())
         assertEquals(TurboProfile.KEEP_ALIVE, client.keepAliveSeen.single())
-        assertEquals(TurboProfile.NUM_CTX, client.optionsSeen.single()["num_ctx"])
         assertEquals(TurboProfile.NUM_PREDICT, client.optionsSeen.single()["num_predict"])
+        // The conversation's own model keeps its window: another num_ctx would
+        // make Ollama reload it entirely on every switch.
+        assertEquals(2048, client.optionsSeen.single()["num_ctx"])
     }
 
     @Test
-    fun `turbo sends only the recent turns`() = runBlocking {
+    fun `a distinct turbo model gets the smaller window`() = runBlocking {
         settings.setTurboEnabled(true)
+        settings.setTurboModel("qwen3:1.7b")
         val id = newConversation()
-        seedLongHistory(id, 30)
 
         val client = FakeClient(mutableListOf(ChatStreamResult("vite")))
-        send(repository(client), id, "la question")
+        send(repository(client), id)
 
-        // One system prompt plus the trimmed history.
+        assertEquals(TurboProfile.NUM_CTX, client.optionsSeen.single()["num_ctx"])
+    }
+
+    @Test
+    fun `turbo sends what fits, newest first, and says what it left out`() = runBlocking {
+        settings.setTurboEnabled(true)
+        val id = newConversation()
+        val seeded = List(30) { i -> "$i " + "x".repeat(3_000) }
+        seeded.forEachIndexed { i, text ->
+            db.messageDao().insert(
+                Message(conversationId = id, role = if (i % 2 == 0) "user" else "assistant", content = text)
+            )
+        }
+
+        val client = FakeClient(mutableListOf(ChatStreamResult("vite")))
+        val result = send(repository(client), id, "la question")
+
         val sent = client.requests.single()
-        assertEquals(1 + TurboProfile.HISTORY_MESSAGES, sent.size)
-        // The message being answered always survives the trim.
+        // The message being answered always goes.
         assertEquals("la question", sent.last().content)
+        // Then the newest turns, contiguous, as many as the window holds.
+        val past = sent.drop(1).dropLast(1).map { it.content }
+        assertTrue(past.isNotEmpty() && past.size < seeded.size)
+        assertEquals(seeded.takeLast(past.size), past)
+        assertTrue(result.stats.orEmpty().contains("non transmis"))
     }
 
     @Test
@@ -819,6 +859,184 @@ class ChatRepositoryTest {
         assertEquals(8192, client.optionsSeen.single()["num_ctx"])
         assertEquals("5m", client.keepAliveSeen.single())
         assertTrue(client.toolsOffered.single().isNotEmpty())
+    }
+
+    // --- context budget, compaction, truncation, vision ---
+
+    private suspend fun seedHeavyHistory(id: Long) {
+        repeat(20) { i ->
+            db.messageDao().insert(
+                Message(conversationId = id, role = if (i % 2 == 0) "user" else "assistant", content = "x".repeat(2_000))
+            )
+        }
+    }
+
+    @Test
+    fun `a long tool output is cut to what the window holds, the trace keeps it whole`() = runBlocking {
+        settings.setToolApprovalEnabled(false)
+        withServer()
+        val mcp = FakeMcp(listOf("lire"), output = { "p".repeat(90_000) })
+        val id = newConversation()
+        val client = FakeClient(mutableListOf(call("fichiers_lire"), ChatStreamResult("fini")))
+
+        val result = send(repository(client, mcp), id)
+
+        val toModel = client.requests[1].last { it.role == "tool" }.content
+        // 90 000 characters is about 30 000 tokens, against a window of 8 192:
+        // sent whole, it is the start of the prompt Ollama would cut.
+        assertTrue(toModel.length < 30_000)
+        assertTrue(toModel.contains(ContextBudget.TRUNCATED_MARK.trim()))
+        val trace = db.messageDao().listForConversation(id).single { it.role == "tool" }
+        assertEquals(90_000, trace.content.length)
+        assertTrue(result.stats.orEmpty().contains("raccourcies"))
+    }
+
+    @Test
+    fun `compaction does not think and dates its summary before the question`() = runBlocking {
+        settings.setNumCtx(2048)
+        settings.setContextCompactEnabled(true)
+        settings.setToolsEnabled(false)
+        val id = newConversation()
+        seedHeavyHistory(id)
+
+        val client = FakeClient(mutableListOf(ChatStreamResult("ok")))
+        send(repository(client), id, "la question")
+
+        // Reasoning would spend the summary's budget and leave it empty.
+        assertEquals(false, client.compactionThink)
+        val sent = client.requests.single()
+        val summaryAt = sent.indexOfFirst { it.content.startsWith("Contexte compacté") }
+        // Dated "now", it used to arrive after the question it does not cover.
+        assertTrue("résumé à la position $summaryAt", summaryAt in 1 until sent.indexOfLast { it.role == "user" })
+        assertTrue(
+            db.messageDao().listForConversation(id).any { it.contentType == ContextBudget.CONTENT_SUMMARY }
+        )
+    }
+
+    @Test
+    fun `a failed compaction is not retried on the next message`() = runBlocking {
+        settings.setNumCtx(2048)
+        settings.setContextCompactEnabled(true)
+        settings.setToolsEnabled(false)
+        val id = newConversation()
+        seedHeavyHistory(id)
+        val client = FakeClient(mutableListOf(ChatStreamResult("r1"), ChatStreamResult("r2")))
+        client.compactionResult = Result.failure(java.io.IOException("délai dépassé"))
+        val repo = repository(client)
+
+        send(repo, id, "q1")
+        send(repo, id, "q2")
+
+        // On a 27B model each attempt costs minutes before the answer starts.
+        assertEquals(1, client.compactionCalls)
+        // Both questions were still answered.
+        assertEquals(2, client.requests.size)
+        assertFalse(db.messageDao().listForConversation(id).any { it.excludedFromContext })
+    }
+
+    @Test
+    fun `stop during compaction ends the turn without starting the answer`() = runBlocking {
+        settings.setNumCtx(2048)
+        settings.setContextCompactEnabled(true)
+        val id = newConversation()
+        seedHeavyHistory(id)
+        val client = FakeClient(mutableListOf(ChatStreamResult("trop tard")))
+        client.compactionResult = Result.failure(OllamaClient.Cancelled())
+
+        val result = send(repository(client), id)
+
+        assertTrue(result.cancelled)
+        assertTrue("la réponse a démarré quand même", client.requests.isEmpty())
+    }
+
+    @Test
+    fun `an answer cut by num_predict is marked as such`() = runBlocking {
+        val id = newConversation()
+        val client = FakeClient(mutableListOf(ChatStreamResult("Le début de", evalCount = 10, truncated = true)))
+
+        val result = send(repository(client), id)
+
+        assertEquals("Le début de", result.text)
+        assertTrue(result.stats.orEmpty().contains("tronquée"))
+        val stored = db.messageDao().listForConversation(id).last { it.role == "assistant" }
+        assertTrue(stored.stats.orEmpty().contains("tronquée"))
+    }
+
+    @Test
+    fun `reasoning that used up num_predict is reported as such and kept`() = runBlocking {
+        val id = newConversation()
+        val client = FakeClient(mutableListOf(ChatStreamResult("", thinking = "Je réfléchis…", truncated = true)))
+
+        val result = send(repository(client), id)
+
+        assertEquals(ChatErrorCode.LENGTH, result.error?.code)
+        val stored = db.messageDao().listForConversation(id).last { it.role == "assistant" }
+        assertEquals("Je réfléchis…", stored.thinking)
+    }
+
+    private val someImage = ChatRepository.ImageProvider { "BASE64" }
+
+    @Test
+    fun `a model known to be blind refuses a question with an image`() = runBlocking {
+        val id = newConversation()
+        val client = FakeClient(
+            mutableListOf(ChatStreamResult("?")),
+            capabilities = ModelCapabilities(tools = true, vision = false),
+        )
+
+        val result = send(repository(client, images = someImage), id, "regarde", listOf("/tmp/photo.jpg"))
+
+        assertEquals(ChatErrorCode.NO_VISION, result.error?.code)
+        assertEquals("qwen3", result.error?.detail)
+        assertTrue(client.requests.isEmpty())
+    }
+
+    @Test
+    fun `an earlier image is described, not sent, to a blind model`() = runBlocking {
+        val id = newConversation()
+        db.messageDao().insert(
+            Message(conversationId = id, role = "user", content = "regarde", imagePaths = "/tmp/photo.jpg")
+        )
+        db.messageDao().insert(Message(conversationId = id, role = "assistant", content = "Un chat."))
+        val client = FakeClient(
+            mutableListOf(ChatStreamResult("Oui.")),
+            capabilities = ModelCapabilities(tools = true, vision = false),
+        )
+
+        send(repository(client, images = someImage), id, "et ensuite ?")
+
+        val sent = client.requests.single()
+        assertTrue(sent.all { it.images.isEmpty() })
+        assertTrue(sent.first { it.content.startsWith("regarde") }.content.contains("image non transmise"))
+    }
+
+    @Test
+    fun `images still reach a model whose vision could not be checked`() = runBlocking {
+        val id = newConversation()
+        val client = FakeClient(
+            mutableListOf(ChatStreamResult("Un chat.")),
+            capabilitiesResult = Result.failure(java.net.SocketTimeoutException("connect timed out")),
+        )
+
+        send(repository(client, images = someImage), id, "regarde", listOf("/tmp/photo.jpg"))
+
+        assertEquals(listOf("BASE64"), client.requests.single().last().images)
+    }
+
+    @Test
+    fun `a failed capability lookup is not repeated on every message`() = runBlocking {
+        val id = newConversation()
+        val client = FakeClient(
+            mutableListOf(ChatStreamResult("r1"), ChatStreamResult("r2")),
+            capabilitiesResult = Result.failure(java.net.SocketTimeoutException("connect timed out")),
+        )
+        val repo = repository(client)
+
+        send(repo, id, "q1")
+        send(repo, id, "q2")
+
+        // Each lookup on a dead network costs a connect timeout of its own.
+        assertEquals(1, client.capabilityCalls)
     }
 
     // --- ephemeral conversations ---

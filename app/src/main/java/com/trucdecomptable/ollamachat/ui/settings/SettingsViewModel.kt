@@ -15,7 +15,6 @@ import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
 import com.trucdecomptable.ollamachat.data.ollama.NetworkScanner
 import com.trucdecomptable.ollamachat.data.prefs.McpServer
 import com.trucdecomptable.ollamachat.data.tools.ToolPolicy
-import com.trucdecomptable.ollamachat.data.repo.TurboProfile
 import com.trucdecomptable.ollamachat.util.ConnectivityProbe
 import com.trucdecomptable.ollamachat.util.DiagnosticLog
 import com.trucdecomptable.ollamachat.util.PinUtils
@@ -175,18 +174,12 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun onDefaultEphemeralChange(v: Int) = launchSetting { settings.setDefaultEphemeralMinutes(v) }
     fun onFirstLaunchDone() = launchSetting { settings.setFirstLaunchDone(true) }
 
-    /** Enabling turbo also warms the model up, so the next message skips the load. */
-    fun onTurboEnabledChange(enabled: Boolean) {
-        viewModelScope.launch {
-            settings.setTurboEnabled(enabled)
-            if (!enabled) return@launch
-            val url = settings.baseUrl.first()
-            val model = settings.turboModel.first().ifBlank { settings.model.first() }
-            if (url.isNotBlank() && model.isNotBlank()) {
-                container.ollamaClient.warmUp(url, model, TurboProfile.KEEP_ALIVE)
-            }
-        }
-    }
+    /**
+     * The warm-up is left to the chat: from here it loaded the default model,
+     * not the one of the conversation turbo was switched on for, and without
+     * its window, so the first message loaded the model a second time.
+     */
+    fun onTurboEnabledChange(enabled: Boolean) = launchSetting { settings.setTurboEnabled(enabled) }
 
     /** Turning the lock on without a code would leave the app effectively open. */
     fun onLockEnabledChange(v: Boolean) {

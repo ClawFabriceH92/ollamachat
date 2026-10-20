@@ -225,7 +225,7 @@ fun ChatScreen(
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = state.activeModel.ifBlank { stringResource(R.string.chat_model_undefined) },
+                                text = state.answeringModel.ifBlank { stringResource(R.string.chat_model_undefined) },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -669,6 +669,8 @@ private fun errorText(context: Context, error: ChatError): String = when (error.
     ChatErrorCode.NO_FIRST_BYTE ->
         context.getString(R.string.error_no_first_byte, error.detail.orEmpty())
     ChatErrorCode.TOOL_LOOP_LIMIT -> context.getString(R.string.error_tool_loop_limit)
+    ChatErrorCode.LENGTH -> context.getString(R.string.error_length)
+    ChatErrorCode.NO_VISION -> context.getString(R.string.error_no_vision, error.detail.orEmpty())
     ChatErrorCode.TIMEOUT -> context.getString(R.string.error_timeout)
     ChatErrorCode.HTTP -> context.getString(R.string.error_http, error.detail.orEmpty())
     ChatErrorCode.SERVER -> context.getString(R.string.error_server, error.detail.orEmpty())

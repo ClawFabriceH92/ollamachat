@@ -1,5 +1,6 @@
 package com.trucdecomptable.ollamachat.data.repo
 
+import androidx.room.withTransaction
 import com.trucdecomptable.ollamachat.data.db.AppDatabase
 import com.trucdecomptable.ollamachat.data.db.Conversation
 import com.trucdecomptable.ollamachat.data.db.ImageStore
@@ -37,6 +38,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Orchestrates a chat round-trip:
@@ -91,8 +93,22 @@ class ChatRepository(
         val cancelled: Boolean = false,
     )
 
-    /** Capabilities are stable per (server, model) — asking once is enough. */
-    private val capabilityCache = mutableMapOf<String, ModelCapabilities>()
+    /**
+     * Capabilities per (server, model), successes only, with when they were
+     * read: a model can be replaced under the same name, so they expire.
+     */
+    private val capabilityCache = ConcurrentHashMap<String, Pair<ModelCapabilities, Long>>()
+
+    /**
+     * When /api/show last failed, per (server, model). The fallback used to be
+     * cached for the life of the process, so one timeout on a broken VPN left
+     * every model without vision until the app restarted; not caching it at
+     * all would add a connect timeout to every message on that network.
+     */
+    private val capabilityFailures = ConcurrentHashMap<String, Long>()
+
+    /** The last failed compaction per conversation: how long the history was, and when. */
+    private val compactionFailures = ConcurrentHashMap<Long, Pair<Int, Long>>()
 
     /**
      * Who the repository asks before running a tool it did not write.
@@ -242,42 +258,69 @@ class ChatRepository(
         val braveKey = settings.braveApiKey.first()
 
         // Turbo is an override layer, never a rewrite of the stored settings.
-        val turbo = settings.turboEnabled.first()
-        val configuredModel = conv.model ?: settings.model.first()
-        val model = if (turbo) settings.turboModel.first().ifBlank { configuredModel } else configuredModel
+        val runner = runner(conv)
+        val turbo = runner.turbo
+        val model = runner.model
         if (model.isBlank()) return TurnOutcome(error = ChatError(ChatErrorCode.NO_MODEL))
+
+        val capabilities = capabilities(baseUrl, model)
+        // Only a model known not to see images loses them; an unknown one
+        // gets them, since withholding them is the failure nobody notices.
+        val blind = capabilities.known && !capabilities.vision
+        if (blind && db.messageDao().lastUser(conversationId)?.hasImages() == true) {
+            return TurnOutcome(error = ChatError(ChatErrorCode.NO_VISION, model))
+        }
 
         // Tools are only offered to models that declare support: sending a
         // `tools` array to a model without it makes Ollama reject the request.
         // Turbo drops them outright — they inflate the prompt and usually buy
         // an extra decision round-trip before a single token comes back.
-        val capabilities = capabilities(baseUrl, model)
         val toolsWanted = !turbo && settings.toolsEnabled.first() && capabilities.tools
         val tools = if (toolsWanted) loadTools() else emptyList()
-
-        // 1. Optional context compaction (before building the payload).
-        // Skipped in turbo: it runs a whole generation before answering.
-        if (!turbo) maybeCompact(conversationId, model, baseUrl, systemPrompt)
-
-        // 2. Build the message list: system (prompt + memories) + history.
         val memories = db.memoryDao().listRecent(if (turbo) TurboProfile.MEMORIES else 8)
-        val history = db.messageDao().listForContext(conversationId)
-            .let { if (turbo) TurboProfile.trimHistory(it) else it }
+        val system = buildSystemPrompt(systemPrompt, memories, tools)
+
+        // One budget for the whole request: what the history may take once
+        // the answer, the system prompt, the memories and the tool
+        // definitions have their room.
+        val budget = ContextBudget.historyBudget(
+            numCtx = runner.numCtx,
+            numPredict = runner.numPredict,
+            fixedTokens = ContextBudget.tokens(system) + ContextBudget.toolTokens(tools),
+        )
+
+        // 1. Optional context compaction. Skipped in turbo: it runs a whole
+        // generation before answering.
+        if (!turbo) {
+            val compaction = maybeCompact(conversationId, model, baseUrl, budget, runner.numCtx, withImages = !blind)
+            if (compaction == Compaction.CANCELLED) return TurnOutcome(cancelled = true)
+        }
+
+        // 2. What this request sends: whatever fits, newest first. Ollama
+        // would otherwise cut the start of the prompt itself, and the system
+        // prompt with it. What had to stay out is said under the answer.
+        val selection = ContextBudget.select(db.messageDao().listForContext(conversationId), budget)
+        val history = selection.messages
+        val notes = mutableListOf<String>()
+        if (selection.dropped > 0) {
+            notes += "${selection.dropped} message(s) ancien(s) non transmis, contexte plein"
+        }
+        if (selection.overflow) notes += "question plus longue que le contexte (num_ctx ${runner.numCtx})"
         val messages = buildList {
-            add(OllamaChatMessage(role = "system", content = buildSystemPrompt(systemPrompt, memories, tools)))
-            history.forEach { m -> add(m.toChatMessage()) }
+            add(OllamaChatMessage(role = "system", content = system))
+            history.forEach { m -> add(m.toChatMessage(withImages = !blind)) }
         }
 
         val options = buildMap<String, Any> {
             put("temperature", settings.temperature.first())
             put("top_p", settings.topP.first())
             put("top_k", settings.topK.first())
-            put("num_predict", if (turbo) TurboProfile.NUM_PREDICT else settings.numPredict.first())
-            put("num_ctx", if (turbo) TurboProfile.NUM_CTX else settings.numCtx.first())
+            put("num_predict", runner.numPredict)
+            put("num_ctx", runner.numCtx)
         }
         // A long keep_alive is the single biggest win: an unloaded model costs
         // seconds before anything happens.
-        val keepAlive = if (turbo) TurboProfile.KEEP_ALIVE else settings.keepAlive.first()
+        val keepAlive = runner.keepAlive
         val think = when {
             turbo -> false
             capabilities.thinking -> settings.thinkEnabled.first()
@@ -302,6 +345,11 @@ class ChatRepository(
         var offeredNow = tools
         var result: ChatStreamResult? = null
         var hitLimit = false
+        // What is left of the budget as tool results come in. Each output gets
+        // a share of it; past that it is cut, and once nothing is left the
+        // model is told to answer with what it has.
+        var contextLeft = budget - history.sumOf { ContextBudget.tokens(it) }
+        var toolOutputCut = false
         val loopMax = if (turbo) 0 else settings.toolLoopMax.first()
         for (iteration in 0..loopMax) {
             val lastRound = iteration == loopMax
@@ -324,14 +372,14 @@ class ChatRepository(
 
             if (round.error != null) {
                 // Keep whatever was streamed before the failure.
-                persistAssistant(conversationId, round, userContent)
+                persistAssistant(conversationId, round, userContent, notes)
                 return TurnOutcome(text = round.fullText.ifBlank { null }, error = round.error)
             }
             if (round.cancelled) {
-                persistAssistant(conversationId, round, userContent)
+                persistAssistant(conversationId, round, userContent, notes)
                 return TurnOutcome(
                     text = round.fullText.ifBlank { null },
-                    stats = round.statsLine(),
+                    stats = statsOf(round, notes),
                     cancelled = true,
                 )
             }
@@ -357,7 +405,9 @@ class ChatRepository(
             val toolMessages = mutableListOf(
                 OllamaChatMessage(role = "assistant", content = round.fullText, toolCalls = round.toolCalls)
             )
-            round.toolCalls.forEach { tc ->
+            contextLeft -= ContextBudget.tokens(round.fullText) +
+                round.toolCalls.sumOf { ContextBudget.tokens(it.name) + ContextBudget.tokens(it.arguments) }
+            round.toolCalls.forEachIndexed { index, tc ->
                 val outcome = runTool(tc, mcpServers, braveKey, turn)
                 // Tool traces are shown to the user but never replayed as
                 // history: the model already saw them in this exchange, and
@@ -376,16 +426,25 @@ class ChatRepository(
                 // Only the results' own addresses: the text also echoes the
                 // query, which the model wrote.
                 turn.trustedUrls += outcome.foundUrls
-                toolMessages.add(
-                    OllamaChatMessage(
-                        role = "tool",
-                        // What the app wrote itself is not foreign data: framing
-                        // "do not call it again" as text to ignore is what made
-                        // the model ask again, and the dialog come back.
-                        content = if (outcome.internal) outcome.text else wrapToolOutput(outcome.text),
-                        toolName = tc.name,
+                // What the app wrote itself is short and must arrive whole, and
+                // it is not foreign data: framing "do not call it again" as text
+                // to ignore is what made the model ask again, and the dialog
+                // come back. A foreign output gets its share of the room left,
+                // split between the calls still to come; the trace above keeps
+                // all of it for the owner.
+                val content = if (outcome.internal) {
+                    outcome.text
+                } else {
+                    val share = contextLeft / (round.toolCalls.size - index)
+                    val fitted = ContextBudget.fitToolOutput(
+                        outcome.text,
+                        share - ContextBudget.tokens(wrapToolOutput("")),
                     )
-                )
+                    if (fitted != outcome.text) toolOutputCut = true
+                    if (fitted == ContextBudget.TOOL_OUTPUT_OMITTED) fitted else wrapToolOutput(fitted)
+                }
+                contextLeft -= ContextBudget.tokens(content)
+                toolMessages.add(OllamaChatMessage(role = "tool", content = content, toolName = tc.name))
             }
             working = working + toolMessages
             // A refused MCP tool is not offered again this turn.
@@ -395,16 +454,75 @@ class ChatRepository(
         }
 
         // 4. Persist the final assistant answer with stats.
+        if (toolOutputCut) notes += "sorties d'outils raccourcies, contexte plein"
         val final = result ?: ChatStreamResult("")
         if (final.fullText.isBlank()) {
             // Reasoning without an answer is kept rather than lost.
-            persistAssistant(conversationId, final, userContent)
-            return TurnOutcome(
-                error = ChatError(if (hitLimit) ChatErrorCode.TOOL_LOOP_LIMIT else ChatErrorCode.EMPTY)
-            )
+            persistAssistant(conversationId, final, userContent, notes)
+            val code = when {
+                hitLimit -> ChatErrorCode.TOOL_LOOP_LIMIT
+                // The reasoning used all of num_predict: "no answer" would
+                // send the owner looking for a fault that is a setting.
+                final.truncated -> ChatErrorCode.LENGTH
+                else -> ChatErrorCode.EMPTY
+            }
+            return TurnOutcome(error = ChatError(code))
         }
-        persistAssistant(conversationId, final, userContent)
-        return TurnOutcome(text = final.fullText, stats = final.statsLine())
+        persistAssistant(conversationId, final, userContent, notes)
+        return TurnOutcome(text = final.fullText, stats = statsOf(final, notes))
+    }
+
+    /** The generation stats, followed by what the turn had to leave out. */
+    private fun statsOf(result: ChatStreamResult, notes: List<String>): String? =
+        (listOfNotNull(result.statsLine()) + notes).joinToString(" · ").ifEmpty { null }
+
+    /** The model, window and limits a turn would use now. */
+    private data class Runner(
+        val model: String,
+        val numCtx: Int,
+        val numPredict: Int,
+        val keepAlive: String,
+        val turbo: Boolean,
+    )
+
+    private suspend fun runner(conv: Conversation?): Runner {
+        val turbo = settings.turboEnabled.first()
+        val own = conv?.model ?: settings.model.first()
+        val turboModel = settings.turboModel.first()
+        return Runner(
+            model = TurboProfile.model(turbo, turboModel, own),
+            numCtx = TurboProfile.numCtx(turbo, turboModel, own, settings.numCtx.first()),
+            numPredict = if (turbo) TurboProfile.NUM_PREDICT else settings.numPredict.first(),
+            keepAlive = if (turbo) TurboProfile.KEEP_ALIVE else settings.keepAlive.first(),
+            turbo = turbo,
+        )
+    }
+
+    /**
+     * Loads the model a turn in [conversationId] would run on, with the same
+     * window and keep_alive, so the first message finds it ready instead of
+     * loading it a second time.
+     */
+    suspend fun warmUp(conversationId: Long) {
+        val baseUrl = settings.baseUrl.first()
+        val runner = runner(db.conversationDao().getById(conversationId))
+        if (baseUrl.isBlank() || runner.model.isBlank()) return
+        client.warmUp(baseUrl, runner.model, runner.keepAlive, runner.numCtx)
+            .onFailure { DiagnosticLog.record("préchauffage", it) }
+    }
+
+    /**
+     * Unloads a turbo model distinct from the conversation's once turbo is
+     * off: held for 30 minutes, it would sit in memory next to the model now
+     * answering.
+     */
+    suspend fun releaseTurboModel(conversationId: Long) {
+        val baseUrl = settings.baseUrl.first()
+        val turboModel = settings.turboModel.first()
+        val own = db.conversationDao().getById(conversationId)?.model ?: settings.model.first()
+        if (baseUrl.isBlank() || turboModel.isBlank() || turboModel == own) return
+        client.warmUp(baseUrl, turboModel, keepAlive = "0")
+            .onFailure { DiagnosticLog.record("préchauffage", it) }
     }
 
     private fun TurnOutcome.report(
@@ -415,6 +533,7 @@ class ChatRepository(
         conversationId: Long,
         result: ChatStreamResult,
         userContent: String,
+        notes: List<String>,
     ) {
         if (result.fullText.isBlank() && result.thinking.isBlank()) return
         db.messageDao().insert(
@@ -422,7 +541,7 @@ class ChatRepository(
                 conversationId = conversationId,
                 role = "assistant",
                 content = result.fullText,
-                stats = result.statsLine(),
+                stats = statsOf(result, notes),
                 thinking = result.thinking.ifBlank { null },
             )
         )
@@ -610,27 +729,42 @@ class ChatRepository(
         }
     }
 
-    private fun Message.toChatMessage(): OllamaChatMessage {
-        val encoded = this.images.mapNotNull { imageProvider.base64(it) }
+    private fun Message.hasImages(): Boolean = images.isNotEmpty() || imageBase64 != null
+
+    /**
+     * [withImages] false for a model known to be blind: an earlier image is
+     * replaced by a note, so the request is not rejected and the model knows
+     * something was there.
+     */
+    private fun Message.toChatMessage(withImages: Boolean = true): OllamaChatMessage {
+        val encoded = if (!withImages) emptyList() else this.images.mapNotNull { imageProvider.base64(it) }
             .ifEmpty { listOfNotNull(imageBase64) }
         return OllamaChatMessage(
             // Tool traces are excluded from context, so anything left that is
             // not user/assistant is context injected by the app.
             role = if (role == "tool") "system" else role,
-            content = content,
+            content = if (!withImages && hasImages()) "$content\n$IMAGE_WITHHELD".trim() else content,
             images = encoded,
         )
     }
 
     private suspend fun capabilities(baseUrl: String, model: String): ModelCapabilities {
         val key = "$baseUrl|$model"
-        capabilityCache[key]?.let { return it }
-        val fetched = client.modelCapabilities(baseUrl, model).getOrNull()
-            // Unknown server or old Ollama: assume tools work rather than
-            // silently dropping a feature the user configured.
-            ?: ModelCapabilities(tools = true)
-        capabilityCache[key] = fetched
-        return fetched
+        val now = System.currentTimeMillis()
+        capabilityCache[key]?.let { (caps, at) -> if (now - at < CAPABILITY_TTL_MS) return caps }
+        capabilityFailures[key]?.let { at -> if (now - at < CAPABILITY_RETRY_MS) return UNKNOWN_CAPABILITIES }
+        return client.modelCapabilities(baseUrl, model).fold(
+            onSuccess = { caps ->
+                capabilityCache[key] = caps to now
+                capabilityFailures.remove(key)
+                caps
+            },
+            onFailure = { e ->
+                capabilityFailures[key] = now
+                DiagnosticLog.record("capacités", e)
+                UNKNOWN_CAPABILITIES
+            },
+        )
     }
 
     /** Loads built-in tools + tools from configured MCP servers (failures ignored). */
@@ -663,54 +797,81 @@ class ChatRepository(
         return tools
     }
 
+    private enum class Compaction { NONE, DONE, FAILED, CANCELLED }
+
     /**
-     * When the conversation is close to overflowing the context window and the
-     * option is enabled, summarizes the older messages into one memory message.
+     * When the history no longer fits its budget and the option is enabled,
+     * folds the older messages into one summary.
      *
      * The summarized messages are hidden from the model, never deleted — the
-     * transcript is the user's data, not a cache.
+     * transcript is the user's data, not a cache. Only what one request can
+     * read is folded at a time: sent more, Ollama cut the start of it, and
+     * those messages were hidden without ever being summarised.
      */
     private suspend fun maybeCompact(
         conversationId: Long,
         model: String,
         baseUrl: String,
-        systemPrompt: String,
-    ) {
-        if (!settings.contextCompactEnabled.first()) return
-        val numCtx = settings.numCtx.first()
+        budget: Int,
+        numCtx: Int,
+        withImages: Boolean,
+    ): Compaction {
+        if (!settings.contextCompactEnabled.first()) return Compaction.NONE
         val history = db.messageDao().listForContext(conversationId)
-        if (!ContextBudget.shouldCompact(history, systemPrompt, numCtx)) return
-        val toSummarize = ContextBudget.toSummarize(history)
-        if (toSummarize.isEmpty()) return
+        val plan = ContextBudget.plan(history, budget) ?: return Compaction.NONE
+        // A failed summary is not retried on every message: on a large model
+        // each attempt costs minutes before the answer even starts.
+        compactionFailures[conversationId]?.let { (size, at) ->
+            val grown = history.size >= size + COMPACTION_RETRY_MESSAGES
+            val waited = System.currentTimeMillis() - at >= COMPACTION_RETRY_MS
+            if (!grown && !waited) return Compaction.NONE
+        }
+        val slice = ContextBudget.sliceToSummarize(
+            plan.summarize,
+            ContextBudget.summaryInputBudget(numCtx, SUMMARY_INSTRUCTION),
+        )
+        val summary = client.chatOnce(
+            baseUrl = baseUrl,
+            model = model,
+            messages = listOf(OllamaChatMessage(role = "system", content = SUMMARY_INSTRUCTION)) +
+                slice.map { it.toChatMessage(withImages) },
+            options = mapOf("num_predict" to ContextBudget.summaryPredict(numCtx), "num_ctx" to numCtx),
+            // Reasoning would spend the summary's budget and leave it empty or cut.
+            think = false,
+        ).map { stripThinking(it).trim() }
+            .getOrElse { e ->
+                if (e is OllamaClient.Cancelled) return Compaction.CANCELLED
+                compactionFailures[conversationId] = history.size to System.currentTimeMillis()
+                DiagnosticLog.record("compaction", e)
+                return Compaction.FAILED
+            }
+        if (summary.isBlank()) {
+            compactionFailures[conversationId] = history.size to System.currentTimeMillis()
+            DiagnosticLog.record("compaction", "résumé vide")
+            return Compaction.FAILED
+        }
 
-        try {
-            val summaryMessages = listOf(
-                OllamaChatMessage(
-                    role = "system",
-                    content = "Voici le début d'une conversation. Résume-la en français, en conservant tous les faits, " +
-                        "décisions, préférences et informations importants. Sois concis mais complet.",
-                )
-            ) + toSummarize.map { it.toChatMessage() }
-            val summary = client.chatOnce(
-                baseUrl = baseUrl,
-                model = model,
-                messages = summaryMessages,
-                options = mapOf("num_predict" to 1024, "num_ctx" to numCtx),
-            ).getOrNull() ?: return
-
-            db.messageDao().excludeFromContext(toSummarize.map { it.id })
+        // Dated just before the first message it does not cover. Dated "now",
+        // it was sorted after the question being answered.
+        val next = history[history.indexOfFirst { it.id == slice.last().id } + 1]
+        db.withTransaction {
+            db.messageDao().excludeFromContext(slice.map { it.id })
             db.messageDao().insert(
                 Message(
                     conversationId = conversationId,
                     role = "system",
-                    content = "Contexte compacté automatiquement (résumé des messages précédents) :\n$summary",
+                    contentType = ContextBudget.CONTENT_SUMMARY,
+                    content = "${ContextBudget.SUMMARY_PREFIX} (résumé des messages précédents) :\n$summary",
+                    createdAt = next.createdAt - 1,
                 )
             )
-        } catch (e: Exception) {
-            // Compaction must never block the send.
-            DiagnosticLog.record("compaction", e)
         }
+        compactionFailures.remove(conversationId)
+        return Compaction.DONE
     }
+
+    /** Reasoning some models write inline even when asked not to think. */
+    private fun stripThinking(text: String): String = THINK_BLOCK.replace(text, "")
 
     private fun deriveTitle(content: String): String {
         val clean = content.trim().replace(Regex("\\s+"), " ")
@@ -819,5 +980,23 @@ class ChatRepository(
 
         /** contentType of the search results the app injects, whose addresses are trusted. */
         const val CONTENT_SEARCH = "search"
+
+        private const val SUMMARY_INSTRUCTION =
+            "Voici le début d'une conversation. Résume-la en français, en conservant tous les faits, " +
+                "décisions, préférences et informations importants. Sois concis mais complet."
+
+        private const val IMAGE_WITHHELD = "[image non transmise : ce modèle ne lit pas les images]"
+
+        private val THINK_BLOCK = Regex("(?s)<think>.*?(</think>|$)")
+
+        /** Assumed when /api/show cannot answer: tools on, as configured; vision unknown. */
+        private val UNKNOWN_CAPABILITIES = ModelCapabilities(tools = true, known = false)
+
+        private const val CAPABILITY_TTL_MS = 30 * 60_000L
+        private const val CAPABILITY_RETRY_MS = 60_000L
+
+        /** A failed compaction is tried again once the history grew this much, or after this long. */
+        private const val COMPACTION_RETRY_MESSAGES = 6
+        private const val COMPACTION_RETRY_MS = 10 * 60_000L
     }
 }
