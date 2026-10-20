@@ -3,6 +3,7 @@ package com.trucdecomptable.ollamachat
 import com.trucdecomptable.ollamachat.data.web.UrlFetcher
 import com.trucdecomptable.ollamachat.util.IpPrefix
 import kotlinx.coroutines.runBlocking
+import okhttp3.Dns
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -94,6 +95,24 @@ class UrlFetcherTest {
         val result = UrlFetcher.fetch(server.url("/").toString(), allowPrivate = true)
 
         assertTrue(result.getOrNull().orEmpty().contains("Contenu de test"))
+    }
+
+    @Test
+    fun `a typed public name that resolves into the lan is refused before connecting`() = runBlocking {
+        // A link pasted from a mail: typed by the owner, but its name is the
+        // sender's, and its DNS can answer a LAN address on any lookup.
+        UrlFetcher.dns = object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> = listOf(InetAddress.getByName("127.0.0.1"))
+        }
+        try {
+            server.enqueue(MockResponse().setBody(page))
+            val result = UrlFetcher.fetch("http://news.example.com:${server.port}/a", allowPrivate = true)
+
+            assertTrue(result.exceptionOrNull().toString(), result.exceptionOrNull() is UrlFetcher.PrivateAddressBlocked)
+            assertEquals(0, server.requestCount)
+        } finally {
+            UrlFetcher.dns = Dns.SYSTEM
+        }
     }
 
     @Test

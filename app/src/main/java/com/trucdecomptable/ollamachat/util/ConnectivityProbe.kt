@@ -94,6 +94,10 @@ object ConnectivityProbe {
         if (!server.ok) {
             // A refusal came back from the server's machine: the way there and
             // back works, whatever the routes say.
+            if (server.reached && server.detail.startsWith("HTTP ")) {
+                return "Un serveur web répond à cette adresse (${server.detail}) mais ce n'est pas " +
+                    "l'API d'Ollama : vérifie le port (11434 par défaut) et l'adresse."
+            }
             if (server.reached) {
                 return "Le serveur répond mais refuse la connexion : Ollama ne " +
                     "tourne pas, n'écoute que sur 127.0.0.1 (règle OLLAMA_HOST=0.0.0.0), ou un " +

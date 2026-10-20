@@ -115,6 +115,28 @@ object ToolPolicy {
             NATIVE.any { it.startsWith("${name}_") } ||
             existing.any { it.startsWith("${name}_") || name.startsWith("${it}_") }
 
+    /**
+     * One search result as the app writes it into the conversation: a single
+     * line ending with the result's address, then its extract. Titles and
+     * extracts are flattened onto one line each, so text a site wrote can
+     * never forge a line of its own.
+     */
+    fun searchResultLine(index: Int, title: String, url: String, snippet: String): String =
+        "$index. ${oneLine(title)} — ${url.trim()}\n   ${oneLine(snippet)}"
+
+    private fun oneLine(text: String) = text.replace(Regex("\\s+"), " ").trim()
+
+    private val RESULT_LINE = Regex("""^\d+\. .* — (https?://\S+)$""", RegexOption.MULTILINE)
+
+    /**
+     * The result addresses of a block written with [searchResultLine], and
+     * nothing else: an address a title or an extract mentions is the site's
+     * own text, and trusting it let any indexed page plant a list of
+     * addresses to be read without asking.
+     */
+    fun searchResultUrls(text: String): Set<String> =
+        RESULT_LINE.findAll(text).map { it.groupValues[1] }.toSet()
+
     /** The "url" argument of a fetch_url call, or null when there is none. */
     fun urlArgument(arguments: String): String? = runCatching {
         JSONObject(arguments).optString("url", "").trim().ifBlank { null }

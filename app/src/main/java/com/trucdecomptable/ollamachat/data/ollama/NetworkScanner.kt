@@ -57,7 +57,10 @@ object NetworkScanner {
             // and tunnel subnets before it gets there. Compared by network
             // address, so a route and an interface on the same subnet count once.
             val networks = (readRoutedNetworks(context) + findLocalNetworks())
-                .distinctBy { networkOf(it.ip, it.prefixLength) to it.prefixLength }
+                // Keyed on the /24 actually enumerated: a wide network is
+                // scanned around its own address, so 10.0.0.0/16 and
+                // 10.0.5.37/16 are two scans, not one.
+                .distinctBy { networkOf(it.ip, maxOf(it.prefixLength, 24)) to it.prefixLength }
             if (networks.isEmpty()) return@withContext ScanOutcome(emptyList(), emptyList())
             val candidates = enumerateCandidates(networks)
             val subnetSummary = networks.map { "${networkOf(it.ip, it.prefixLength)}/${it.prefixLength}" }.distinct()
@@ -111,7 +114,7 @@ object NetworkScanner {
             .flatMap { network ->
                 val link = cm.getLinkProperties(network) ?: return@flatMap emptyList<NetworkInfo>()
                 val iface = link.interfaceName.orEmpty().lowercase()
-                val own = link.linkAddresses.map { it.address }
+                val own = link.linkAddresses
                 link.routes.mapNotNull { route ->
                     val destination = route.destination
                     val address = destination.address
@@ -125,8 +128,11 @@ object NetworkScanner {
                         // "Exclure les IP privées" fills the tunnel with public
                         // ranges: an Ollama server lives on a private network.
                         !address.isSiteLocalAddress && !isCarrierGrade(address) -> null
-                        // The tunnel's own subnet is scanned with its interface.
-                        own.any { route.matches(it) } -> null
+                        // The tunnel's own subnet is scanned with its interface,
+                        // but only when the interface spans it: a /32 tunnel
+                        // address covers nothing, and a server at 10.8.0.1
+                        // behind a 10.8.0.2/32 tunnel lives in the route alone.
+                        own.any { it.prefixLength <= destination.prefixLength && route.matches(it.address) } -> null
                         else -> address.hostAddress?.let { NetworkInfo(it, destination.prefixLength, iface) }
                     }
                 }

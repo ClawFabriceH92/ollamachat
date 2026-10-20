@@ -570,11 +570,14 @@ class ChatRepository(
             .flatMap { ToolPolicy.extractUrls(it.content) }
             .toSet()
 
-    /** Typed addresses, plus those of search results the app injected itself. */
+    /**
+     * Typed addresses, plus the result addresses of searches the app injected
+     * itself: not those their titles or extracts mention.
+     */
     private fun trustedUrlsIn(history: List<Message>): Set<String> =
         typedUrlsIn(history) + history
             .filter { it.role == "system" && it.contentType == CONTENT_SEARCH }
-            .flatMap { ToolPolicy.extractUrls(it.content) }
+            .flatMap { ToolPolicy.searchResultUrls(it.content) }
 
     /**
      * Tool output is attacker-controlled as soon as it comes from the web, so

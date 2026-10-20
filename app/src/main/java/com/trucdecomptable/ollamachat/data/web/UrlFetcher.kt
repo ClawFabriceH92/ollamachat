@@ -3,6 +3,7 @@ package com.trucdecomptable.ollamachat.data.web
 import com.trucdecomptable.ollamachat.util.IpPrefix
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Dns
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -24,15 +25,22 @@ object UrlFetcher {
 
     private const val MAX_CHARS = 40000
 
-    /** A fetch the model asked for landed on an address inside a private network. */
+    /** Redirects are followed by hand, each hop checked before it is taken. */
+    private const val MAX_REDIRECTS = 5
+
+    private const val USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+
+    /** A fetch landed on an address inside a private network it had no right to. */
     class PrivateAddressBlocked(host: String) :
         IOException("adresse de réseau privé refusée ($host)")
 
-    /**
-     * Carried on each request, redirects included, so the network interceptor
-     * knows what is allowed: the LAN, on the one host the owner typed.
-     */
+    /** Carried on each request so the last-resort interceptor knows what is allowed. */
     private class Access(val privateHost: String?)
+
+    /** Name resolution, replaceable by a test. */
+    @Volatile
+    internal var dns: Dns = Dns.SYSTEM
 
     private val http: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -40,18 +48,15 @@ object UrlFetcher {
             .readTimeout(30, TimeUnit.SECONDS)
             .callTimeout(45, TimeUnit.SECONDS)
             // Direct, never through a system proxy: through one, the address
-            // connected to is the proxy's, and the check below would vouch for
-            // the proxy instead of the page.
+            // checked would be the proxy's, not the page's.
             .proxy(Proxy.NO_PROXY)
-            // Checked on the address actually connected to, at every hop: this
-            // covers redirects from a public page into the LAN, DNS that
-            // answers a private address, and IP literals alike. Checking the
-            // URL text before the request would miss all three.
+            // Last resort only. A network interceptor runs once the connection
+            // is open, and by then a SYN to a LAN port has already told whoever
+            // asked whether it answers. The real checks come before connecting:
+            // the resolver of [guardedClient] and [checkLiteral].
             .addNetworkInterceptor { chain ->
                 val request = chain.request()
                 val privateHost = request.tag(Access::class.java)?.privateHost
-                // The owner's word covers the host they typed, not a redirect
-                // from it to another machine of the LAN.
                 val allowed = privateHost != null && request.url.host == privateHost
                 val address = chain.connection()?.route()?.socketAddress?.address
                 if (!allowed && (address == null || isPrivate(address.address) || onAttachedNetwork(address))) {
@@ -63,12 +68,47 @@ object UrlFetcher {
     }
 
     /**
+     * A client that refuses, before connecting, a name resolving into a
+     * private network (DNS rebinding included: the check runs on every
+     * resolution), except [privateHost]. It follows no redirect by itself.
+     */
+    private fun guardedClient(privateHost: String?): OkHttpClient = http.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .dns(object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> {
+                val addresses = dns.lookup(hostname)
+                if (hostname != privateHost && addresses.any { isPrivate(it.address) || onAttachedNetwork(it) }) {
+                    throw PrivateAddressBlocked(hostname)
+                }
+                return addresses
+            }
+        })
+        .build()
+
+    /** An IP literal never reaches the resolver: checked here, before connecting. */
+    private fun checkLiteral(host: String, privateHost: String?) {
+        if (host == privateHost || !isIpLiteral(host)) return
+        // A literal is parsed, not looked up.
+        val address = InetAddress.getByName(host)
+        if (isPrivate(address.address) || onAttachedNetwork(address)) throw PrivateAddressBlocked(host)
+    }
+
+    private fun isIpLiteral(host: String): Boolean =
+        host.contains(':') || IPV4.matches(host)
+
+    private val IPV4 = Regex("""\d{1,3}(\.\d{1,3}){3}""")
+
+    /**
      * Reads a page.
      *
-     * [allowPrivate] is for an address the owner typed themselves. When the
-     * model chose the address, the LAN is out of reach: a planted page could
-     * otherwise have it read the router or the Ollama server and pass the
-     * result on.
+     * [allowPrivate] is for an address the owner typed themselves, and it
+     * opens the LAN only to a host that is on the LAN by its very form: an IP
+     * literal, a bare machine name, a local suffix. A public name typed by the
+     * owner, a link pasted from a mail say, could resolve into the LAN on the
+     * second lookup. When the model chose the address, the LAN is out of
+     * reach altogether: a planted page could otherwise have it read the router
+     * or the Ollama server and pass the result on.
      */
     suspend fun fetch(rawUrl: String, allowPrivate: Boolean = false): Result<String> =
         withContext(Dispatchers.IO) {
@@ -77,18 +117,22 @@ object UrlFetcher {
             if ((!url.startsWith("http://") && !url.startsWith("https://")) || host == null) {
                 return@withContext Result.failure(IllegalArgumentException("URL invalide — commence par http:// ou https://"))
             }
+            val local = isPrivateLiteral(url) || looksLocal(host)
             try {
-                val direct = tryDirect(url, privateHost = if (allowPrivate) host else null)
-                if (direct != null) return@withContext Result.success(truncate(direct, url))
-                // The reader service sees the full address. One that can only
-                // be on the LAN would leak its layout without any chance of
-                // success, typed by the owner or not.
-                if (isPrivateLiteral(url) || looksLocal(host)) {
-                    return@withContext Result.failure(IllegalStateException("Impossible de lire la page"))
+                when (val direct = tryDirect(url, privateHost = if (allowPrivate && local) host else null)) {
+                    is Direct.Page -> Result.success(truncate(direct.text, url))
+                    Direct.Unreachable -> Result.failure(IllegalStateException("Impossible de joindre le site"))
+                    // The reader service sees the full address: only for a
+                    // public site that answered, never for a local one or a
+                    // hop that went nowhere, or it would learn the LAN's layout
+                    // and whoever chose the address with it.
+                    Direct.Answered -> if (local) {
+                        Result.failure(IllegalStateException("Impossible de lire la page"))
+                    } else {
+                        tryReader(url)?.let { Result.success(truncate(it, url)) }
+                            ?: Result.failure(IllegalStateException("Impossible de lire la page (site protégé ?)"))
+                    }
                 }
-                val viaReader = tryReader(url)
-                    ?: return@withContext Result.failure(IllegalStateException("Impossible de lire la page (site protégé ?)"))
-                Result.success(truncate(viaReader, url))
             } catch (e: PrivateAddressBlocked) {
                 // Final: falling back to the reader would hand it the address.
                 Result.failure(e)
@@ -97,24 +141,52 @@ object UrlFetcher {
             }
         }
 
-    private fun tryDirect(url: String, privateHost: String?): String? {
-        return try {
-            val req = Request.Builder()
-                .url(url)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36")
+    /** What the site itself gave. */
+    private sealed interface Direct {
+        data class Page(val text: String) : Direct
+
+        /** It answered, with nothing readable: the reader service may do better. */
+        data object Answered : Direct
+
+        /** Nothing answered. */
+        data object Unreachable : Direct
+    }
+
+    private fun tryDirect(url: String, privateHost: String?): Direct {
+        val client = guardedClient(privateHost)
+        var target = url.toHttpUrlOrNull() ?: return Direct.Unreachable
+        var hops = 0
+        while (true) {
+            checkLiteral(target.host, privateHost)
+            val request = Request.Builder()
+                .url(target)
+                .header("User-Agent", USER_AGENT)
                 .tag(Access::class.java, Access(privateHost))
                 .get()
                 .build()
-            http.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return null
-                val body = resp.body?.string() ?: return null
-                val text = stripHtml(body)
-                if (text.isBlank() || text.length < 200) null else text
+            val response = try {
+                client.newCall(request).execute()
+            } catch (e: PrivateAddressBlocked) {
+                throw e
+            } catch (_: IOException) {
+                return Direct.Unreachable
             }
-        } catch (e: PrivateAddressBlocked) {
-            throw e
-        } catch (_: Exception) {
-            null
+            val next = try {
+                response.use { resp ->
+                    if (resp.isRedirect) {
+                        resp.header("Location")?.let { resp.request.url.resolve(it) } ?: return Direct.Answered
+                    } else {
+                        if (!resp.isSuccessful) return Direct.Answered
+                        val text = stripHtml(resp.body?.string() ?: return Direct.Answered)
+                        return if (text.isBlank() || text.length < 200) Direct.Answered else Direct.Page(text)
+                    }
+                }
+            } catch (_: IOException) {
+                // Headers came, the body did not: the site is there.
+                return Direct.Answered
+            }
+            if (++hops > MAX_REDIRECTS) return Direct.Answered
+            target = next
         }
     }
 

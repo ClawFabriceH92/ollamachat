@@ -184,6 +184,16 @@ class ConnectivityProbeTest {
     }
 
     @Test
+    fun `a web server that is not ollama is named as such`() {
+        val v = verdict(
+            report(serverOk = false, updateOk = true, serverReached = true, route = ServerRoute.VPN_SPECIFIC)
+                .let { r -> r.copy(legs = r.legs.map { if (it.name.startsWith(ConnectivityProbe.SERVER)) it.copy(detail = "HTTP 404") else it }) }
+        )
+        assertTrue(v, v.contains("HTTP 404"))
+        assertFalse(v, v.contains("OLLAMA_HOST"))
+    }
+
+    @Test
     fun `a refusal is told from silence`() {
         val refused = java.net.ConnectException(
             "failed to connect to /192.168.0.162 (port 11434) from /192.168.27.65 (port 43352) after 10000ms: " +

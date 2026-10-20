@@ -110,12 +110,21 @@ open class OllamaClient(
         }
     }
 
-    /** True when anything at all answers at [target], an HTTP error included. */
-    private suspend fun answers(target: String): Boolean = withContext(Dispatchers.IO) {
-        runCatching {
-            val req = Request.Builder().url("$target/api/version").get().build()
-            http.newCall(req).execute().use { true }
-        }.getOrDefault(false)
+    /**
+     * True when anything at all answers at [target], an HTTP error included;
+     * null when Stop interrupted the check. Registered as the active call, so
+     * Stop reaches it like the answer it stands for, and kept short.
+     */
+    private suspend fun answers(target: String): Boolean? = withContext(Dispatchers.IO) {
+        val req = Request.Builder().url("$target/api/version").get().build()
+        val check = http.newBuilder().callTimeout(5, TimeUnit.SECONDS).build().newCall(req)
+        activeCall.set(check)
+        try {
+            val answered = runCatching { check.execute().use { true } }.getOrDefault(false)
+            if (check.isCanceled()) null else answered
+        } finally {
+            activeCall.compareAndSet(check, null)
+        }
     }
 
     /** List models installed on the server. */
@@ -405,10 +414,13 @@ open class OllamaClient(
                 // "Connected, the network works" is only said once checked: a
                 // pooled connection the tunnel silently stopped carrying also
                 // gets its request written, then waits for nothing.
-                if (error.code == ChatErrorCode.NO_FIRST_BYTE && !answers(target)) {
-                    error = ChatError(ChatErrorCode.CONNECT_TIMEOUT, target)
+                val reachable = if (error.code == ChatErrorCode.NO_FIRST_BYTE) answers(target) else true
+                if (reachable == null || call.isCanceled()) {
+                    ChatStreamResult(text.toString(), thinking = reasoning.toString(), cancelled = true)
+                } else {
+                    if (!reachable) error = ChatError(ChatErrorCode.CONNECT_TIMEOUT, target)
+                    ChatStreamResult(text.toString(), thinking = reasoning.toString(), error = error)
                 }
-                ChatStreamResult(text.toString(), thinking = reasoning.toString(), error = error)
             }
         } catch (e: Exception) {
             ChatStreamResult(

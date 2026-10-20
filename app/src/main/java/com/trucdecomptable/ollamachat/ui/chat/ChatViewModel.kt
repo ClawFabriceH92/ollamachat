@@ -21,6 +21,7 @@ import com.trucdecomptable.ollamachat.data.repo.TurboProfile
 import com.trucdecomptable.ollamachat.data.tools.ApprovalDecision
 import com.trucdecomptable.ollamachat.data.tools.ApprovalRequest
 import com.trucdecomptable.ollamachat.data.tools.ToolApprover
+import com.trucdecomptable.ollamachat.data.tools.ToolPolicy
 import com.trucdecomptable.ollamachat.data.web.UrlFetcher
 import com.trucdecomptable.ollamachat.data.web.WebSearchClient
 import com.trucdecomptable.ollamachat.ui.documents.DocumentExtractor
@@ -386,7 +387,7 @@ class ChatViewModel(
                 return@launch
             }
             val contextText = results.mapIndexed { i, r ->
-                "${i + 1}. ${r.title} — ${r.url}\n   ${r.snippet}"
+                ToolPolicy.searchResultLine(i + 1, r.title, r.url, r.snippet)
             }.joinToString("\n\n")
             // Marked as search results: the addresses in them existed before the
             // model could write anything into them, so fetch_url may read them
