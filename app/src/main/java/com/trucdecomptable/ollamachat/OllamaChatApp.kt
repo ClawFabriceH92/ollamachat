@@ -53,6 +53,8 @@ class OllamaChatApp : Application() {
 
 /** Simple manual DI container — no Hilt, keeps the build light. */
 class AppContainer(app: Application) {
+    /** For the few data-layer calls that need the system (routes, for the scanner). */
+    val appContext: android.content.Context = app
     val database: AppDatabase = AppDatabase.get(app)
     val settings: SettingsRepository = SettingsRepository(app)
     val ollamaClient: OllamaClient = OllamaClient()

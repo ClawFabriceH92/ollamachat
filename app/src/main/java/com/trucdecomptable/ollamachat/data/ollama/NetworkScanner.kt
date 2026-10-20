@@ -1,5 +1,8 @@
 package com.trucdecomptable.ollamachat.data.ollama
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -44,12 +47,23 @@ object NetworkScanner {
             .build()
     }
 
-    suspend fun scanForOllama(ports: List<Int> = listOf(11434, 11435)): ScanOutcome =
+    suspend fun scanForOllama(
+        context: Context,
+        ports: List<Int> = listOf(11434, 11435),
+    ): ScanOutcome =
         withContext(Dispatchers.IO) {
-            val networks = findLocalNetworks() + readRoutedNetworks()
+            // Networks behind a tunnel first: they are the reason this exists,
+            // and the address cap is otherwise spent on the phone's own mobile
+            // and tunnel subnets before it gets there. Compared by network
+            // address, so a route and an interface on the same subnet count once.
+            val networks = (readRoutedNetworks(context) + findLocalNetworks())
+                // Keyed on the /24 actually enumerated: a wide network is
+                // scanned around its own address, so 10.0.0.0/16 and
+                // 10.0.5.37/16 are two scans, not one.
+                .distinctBy { networkOf(it.ip, maxOf(it.prefixLength, 24)) to it.prefixLength }
             if (networks.isEmpty()) return@withContext ScanOutcome(emptyList(), emptyList())
             val candidates = enumerateCandidates(networks)
-            val subnetSummary = networks.map { "${it.ip}/${it.prefixLength}" }.distinct()
+            val subnetSummary = networks.map { "${networkOf(it.ip, it.prefixLength)}/${it.prefixLength}" }.distinct()
             if (candidates.isEmpty()) return@withContext ScanOutcome(emptyList(), subnetSummary)
             val results = coroutineScope {
                 candidates.map { ip ->
@@ -81,41 +95,64 @@ object NetworkScanner {
     }
 
     /**
-     * Reads the kernel routing table (/proc/net/route) to find networks that
-     * are reachable by routing — typically the LAN behind a VPN tunnel, whose
-     * subnet does NOT match any local interface address (e.g. phone has a
-     * 10.8.0.x tunnel IP, server lives on 192.168.0.0/24 behind the tunnel).
+     * Networks reachable through a route rather than an interface address —
+     * typically the LAN behind a VPN tunnel, whose subnet matches no address
+     * of the phone (a 192.168.27.x tunnel address, a server in 192.168.0.0/24).
+     *
+     * Read through ConnectivityManager. This used to read /proc/net/route,
+     * which Android has not let an app read since Android 10: the failure was
+     * swallowed and the LAN behind the tunnel was never scanned at all.
      */
-    private fun readRoutedNetworks(): List<NetworkInfo> {
-        val result = mutableListOf<NetworkInfo>()
-        try {
-            val lines = java.io.File("/proc/net/route").readLines()
-            for (line in lines.drop(1)) {
-                val parts = line.trim().split(Regex("\\s+"))
-                if (parts.size < 8) continue
-                val iface = parts[0]
-                val dest = hexToInt(parts[1]) ?: continue
-                val mask = hexToInt(parts[7]) ?: continue
-                if (dest == 0 || mask == 0) continue // default route or host route
-                val prefix = Integer.bitCount(mask)
-                if (prefix < 8 || prefix > 30) continue
-                val ip = intToIp(dest)
-                result.add(NetworkInfo(ip, prefix, iface.lowercase()))
+    private fun readRoutedNetworks(context: Context): List<NetworkInfo> = runCatching {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+            ?: return@runCatching emptyList()
+        @Suppress("DEPRECATION")
+        cm.allNetworks.toList()
+            // Only tunnels: the other networks' routes are the subnets of their
+            // own interfaces, which findLocalNetworks already has.
+            .filter { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true }
+            .flatMap { network ->
+                val link = cm.getLinkProperties(network) ?: return@flatMap emptyList<NetworkInfo>()
+                val iface = link.interfaceName.orEmpty().lowercase()
+                val own = link.linkAddresses
+                link.routes.mapNotNull { route ->
+                    val destination = route.destination
+                    val address = destination.address
+                    val text = route.toString()
+                    when {
+                        route.isDefaultRoute -> null
+                        address !is Inet4Address -> null
+                        // A tunnel's excluded ranges are ways out of it, not networks.
+                        text.contains(" throw") || text.contains(" unreachable") -> null
+                        destination.prefixLength !in 8..30 -> null
+                        // "Exclure les IP privées" fills the tunnel with public
+                        // ranges: an Ollama server lives on a private network.
+                        !address.isSiteLocalAddress && !isCarrierGrade(address) -> null
+                        // The tunnel's own subnet is scanned with its interface,
+                        // but only when the interface spans it: a /32 tunnel
+                        // address covers nothing, and a server at 10.8.0.1
+                        // behind a 10.8.0.2/32 tunnel lives in the route alone.
+                        own.any { it.prefixLength <= destination.prefixLength && route.matches(it.address) } -> null
+                        else -> address.hostAddress?.let { NetworkInfo(it, destination.prefixLength, iface) }
+                    }
+                }
             }
-        } catch (_: Exception) {
-            // /proc/net/route unreadable — fall back to interfaces only.
-        }
-        return result
+    }.getOrDefault(emptyList())
+
+    /** 100.64.0.0/10, which Tailscale and some VPNs use for their own networks. */
+    private fun isCarrierGrade(address: Inet4Address): Boolean {
+        val b = address.address
+        return (b[0].toInt() and 0xFF) == 100 && (b[1].toInt() and 0xC0) == 64
     }
 
-    /** Parses a little-endian hex IPv4 (e.g. "0000A8C0" -> 0xC0A80000). Visible for tests. */
-    internal fun hexToInt(hex: String): Int? {
-        val v = hex.toLongOrNull(16) ?: return null
-        val result = ((v and 0xFFL) shl 24) or
-            (((v shr 8) and 0xFFL) shl 16) or
-            (((v shr 16) and 0xFFL) shl 8) or
-            ((v shr 24) and 0xFFL)
-        return result.toInt()
+    /** The network address of [ip] for a prefix, as dotted text. */
+    internal fun networkOf(ip: String, prefixLength: Int): String {
+        val parts = ip.split(".").mapNotNull { it.toIntOrNull() }
+        if (parts.size != 4) return ip
+        val value = (parts[0] shl 24) or (parts[1] shl 16) or (parts[2] shl 8) or parts[3]
+        val length = prefixLength.coerceIn(0, 32)
+        val mask = if (length == 0) 0 else -1 shl (32 - length)
+        return intToIp(value and mask)
     }
 
     /** Collects every usable IPv4 interface; physical interfaces first, VPN tunnels last. */
@@ -148,7 +185,8 @@ object NetworkScanner {
      * addresses). Wide networks (> /24) also get the x.y.0.0/24 prefix scan.
      */
     private fun enumerateCandidates(networks: List<NetworkInfo>): List<String> {
-        val result = mutableListOf<String>()
+        // A set: an address listed twice must not spend the cap twice.
+        val result = LinkedHashSet<String>()
         networks.forEach { net ->
             val parts = net.ip.split(".").map { it.toIntOrNull() ?: 0 }
             val own24 = parts[0] * 16777216 + parts[1] * 65536 + parts[2] * 256
@@ -158,25 +196,24 @@ object NetworkScanner {
             if (prefix >= 24) {
                 val hosts = 1 shl (32 - prefix)
                 for (i in 1 until hosts) {
-                    if (result.size >= MAX_ADDRESSES) return result
+                    if (result.size >= MAX_ADDRESSES) return result.toList()
                     result.add(intToIp(own24 + i))
                 }
             } else {
                 // Wide network: scan the interface's own /24.
                 for (i in 1..254) {
-                    if (result.size >= MAX_ADDRESSES) return result
+                    if (result.size >= MAX_ADDRESSES) return result.toList()
                     result.add(intToIp(own24 + i))
                 }
                 // Plus the x.y.0.0/24 of the same first two octets.
                 val gw24 = parts[0] * 16777216 + parts[1] * 65536
                 for (i in 1..254) {
-                    if (result.size >= MAX_ADDRESSES) return result
-                    val candidate = intToIp(gw24 + i)
-                    if (candidate !in result) result.add(candidate)
+                    if (result.size >= MAX_ADDRESSES) return result.toList()
+                    result.add(intToIp(gw24 + i))
                 }
             }
         }
-        return result.distinct()
+        return result.toList()
     }
 
     private fun intToIp(value: Int): String =

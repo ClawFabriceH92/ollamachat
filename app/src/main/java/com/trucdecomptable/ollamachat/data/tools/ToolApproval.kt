@@ -7,6 +7,11 @@ data class ApprovalRequest(
     val serverName: String?,
     /** The arguments, as the model sent them, for the user to read. */
     val arguments: String,
+    /**
+     * Whether "always" is offered. It is not for fetch_url: allowing it for
+     * good would reopen the exfiltration channel for every future page.
+     */
+    val allowAlways: Boolean = true,
 )
 
 enum class ApprovalDecision {

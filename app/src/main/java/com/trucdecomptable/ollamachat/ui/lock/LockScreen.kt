@@ -48,11 +48,17 @@ import kotlinx.coroutines.launch
  * [onSubmit] verifies the code off the main thread (the hash is deliberately
  * slow) and returns true on success; [lockedUntil] is the epoch millis before
  * which entry is refused after too many wrong tries.
+ *
+ * [pinLength] is the length of the stored PIN when known. The pad used to
+ * submit at the minimum length whatever the PIN was, so a 5- to 8-digit code
+ * was checked at 4 digits, failed, and could never be typed at all. Now it
+ * auto-submits only at the known length, and otherwise waits for OK.
  */
 @Composable
 fun LockScreen(
     biometricAvailable: Boolean,
     lockedUntil: Long,
+    pinLength: Int?,
     onSubmit: suspend (String) -> Boolean,
     onBiometric: () -> Unit,
 ) {
@@ -90,7 +96,7 @@ fun LockScreen(
         if (pin.length >= PinUtils.MAX_LENGTH) return
         pin += digit
         error = false
-        if (pin.length == PinUtils.MIN_LENGTH) submit()
+        if (pinLength != null && pin.length == pinLength) submit()
     }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -126,7 +132,8 @@ fun LockScreen(
 
             Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                repeat(PinUtils.MAX_LENGTH.coerceAtMost(maxOf(pin.length, PinUtils.MIN_LENGTH))) { index ->
+                val dots = pinLength ?: maxOf(pin.length, PinUtils.MIN_LENGTH)
+                repeat(PinUtils.MAX_LENGTH.coerceAtMost(dots)) { index ->
                     Box(
                         modifier = Modifier
                             .size(14.dp)
@@ -169,7 +176,7 @@ fun LockScreen(
                 DigitKey('0') { press('0') }
                 Box(modifier = Modifier.size(72.dp)) {
                     IconButton(
-                        onClick = { if (pin.isNotEmpty()) pin = pin.dropLast(1) },
+                        onClick = { if (!checking && pin.isNotEmpty()) pin = pin.dropLast(1) },
                         modifier = Modifier.size(72.dp),
                     ) {
                         Icon(
@@ -180,7 +187,9 @@ fun LockScreen(
                 }
             }
 
-            if (pin.length > PinUtils.MIN_LENGTH) {
+            // Only needed while the length is unknown; from MIN_LENGTH, so a
+            // 4-digit PIN of unknown length can still be confirmed.
+            if (pinLength == null && pin.length >= PinUtils.MIN_LENGTH) {
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = { submit() }, enabled = !checking && !blocked) {
                     Text(stringResource(R.string.action_ok))

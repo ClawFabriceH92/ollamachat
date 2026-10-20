@@ -4,6 +4,7 @@ import com.trucdecomptable.ollamachat.update.UpdateChecker
 import com.trucdecomptable.ollamachat.update.UpdateSchedule
 import org.json.JSONArray
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -231,5 +232,54 @@ class UpdateScheduleTest {
                 now = 1_760_000_000_000L,
             )
         )
+    }
+}
+
+/**
+ * Whether anything answered decides who is blamed: a refusal from GitHub
+ * means the network works, and the connectivity report must not accuse the
+ * tunnel for it.
+ */
+class UpdateFailureVerdictTest {
+
+    private val missing = Result.failure<String>(UpdateChecker.HttpStatusException(404, "ressource absente (HTTP 404)"))
+    private val quota = Result.failure<String>(
+        UpdateChecker.HttpStatusException(403, UpdateChecker.httpReason(403, "0"))
+    )
+    private val offline = Result.failure<String>(java.net.UnknownHostException("github.com"))
+
+    @Test
+    fun `a network failure wins and means nothing answered`() {
+        val v = UpdateChecker.failureVerdict(missing, offline)
+        assertTrue(v.reason, v.reason.contains("DNS"))
+        // The reason is a network failure: saying GitHub answered would
+        // contradict it ("GitHub a répondu : DNS…").
+        assertFalse(v.answered)
+
+        val both = UpdateChecker.failureVerdict(offline, offline)
+        assertFalse(both.answered)
+    }
+
+    @Test
+    fun `the log line never contradicts its reason`() {
+        listOf(missing to offline, offline to quota, missing to quota, offline to offline).forEach { (m, a) ->
+            val line = UpdateChecker.logLine(UpdateChecker.failureVerdict(m, a))
+            val network = line.contains("DNS")
+            assertTrue(line, !network || line.startsWith("vérification impossible"))
+        }
+    }
+
+    @Test
+    fun `the quota explains more than a missing manifest`() {
+        // The manifest's 404 used to win and hide the quota message entirely.
+        val v = UpdateChecker.failureVerdict(missing, quota)
+        assertTrue(v.reason, v.reason.contains("quota"))
+        assertTrue(v.answered)
+    }
+
+    @Test
+    fun `an unreadable answer is still an answer`() {
+        val v = UpdateChecker.failureVerdict(Result.success("<html>"), Result.success("{}"))
+        assertTrue(v.answered)
     }
 }

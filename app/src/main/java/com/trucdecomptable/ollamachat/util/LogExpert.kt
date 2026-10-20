@@ -132,8 +132,10 @@ object LogExpert {
     }
 
     private fun updateChecksFailing(entries: List<DiagnosticLog.Entry>): Finding? {
+        // Only checks where nothing answered: "GitHub a répondu : …" means the
+        // network works, and is not this finding.
         val matches = entries.filter {
-            it.tag.startsWith("update") && it.message.contains("vérification impossible")
+            it.tag.startsWith("update") && it.message.startsWith("vérification impossible")
         }
         // The quota case is reported on its own, with a better explanation.
         if (matches.isEmpty() || matches.all { it.message.contains("quota") }) return null

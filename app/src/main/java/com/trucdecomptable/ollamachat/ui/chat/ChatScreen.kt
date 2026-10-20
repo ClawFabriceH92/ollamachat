@@ -126,6 +126,7 @@ fun ChatScreen(
 ) {
     val state by vm.uiState.collectAsState()
     val pendingApproval by vm.pendingApproval.collectAsState()
+    val conversationGone by vm.conversationGone.collectAsState()
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -142,6 +143,14 @@ fun ChatScreen(
     var editTarget by remember { mutableStateOf<Message?>(null) }
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
+    LaunchedEffect(conversationGone) {
+        if (conversationGone) {
+            android.widget.Toast
+                .makeText(context, R.string.toast_conversation_expired, android.widget.Toast.LENGTH_LONG)
+                .show()
+            onBack()
+        }
+    }
     val scope = rememberCoroutineScope()
     val turboAnnounced = remember { mutableStateOf<Boolean?>(null) }
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -341,7 +350,10 @@ fun ChatScreen(
         bottomBar = {
             ChatInputBar(
                 input = input,
-                onInputChange = { input = it },
+                onInputChange = {
+                    input = it
+                    vm.onTyping()
+                },
                 isSending = state.isSending,
                 onSend = {
                     if (input.isNotBlank()) {
@@ -427,9 +439,21 @@ fun ChatScreen(
     }
 
     actionTarget?.let { message ->
+        // The repository answers the last question again, so only the answer
+        // to that question can be regenerated. Offered on an older answer, it
+        // deleted the latest one instead — and with it an unanswered question.
+        val lastQuestion = state.messages.lastOrNull { it.role == "user" }
+        val answered = lastQuestion != null &&
+            state.messages.any { it.role == "assistant" && it.id > lastQuestion.id }
+        val lastAnswer = state.messages.lastOrNull { it.role == "assistant" }
         MessageActionsDialog(
             message = message,
-            canRegenerate = message.role == "assistant" && !state.isSending,
+            canRegenerate = !state.isSending && message.role == "assistant" &&
+                message.id == lastAnswer?.id && answered,
+            // A question left without an answer (a failed turn) is asked again
+            // in place, without deleting anything.
+            canRetry = !state.isSending && message.role == "user" &&
+                message.id == lastQuestion?.id && !answered,
             canEdit = message.role == "user" && !state.isSending,
             onCopy = {
                 clipboard.setText(AnnotatedString(message.content))
@@ -603,8 +627,13 @@ private fun ToolApprovalDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                // The risk is not the same: an MCP tool does what its server
+                // says; a page read sends whatever the model put in the address.
                 Text(
-                    text = stringResource(R.string.tool_approval_warning),
+                    text = stringResource(
+                        if (request.serverName != null) R.string.tool_approval_warning
+                        else R.string.tool_approval_warning_address
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -620,8 +649,12 @@ private fun ToolApprovalDialog(
                 TextButton(onClick = { onDecision(ApprovalDecision.DENY) }) {
                     Text(stringResource(R.string.tool_approval_deny))
                 }
-                TextButton(onClick = { onDecision(ApprovalDecision.ALWAYS) }) {
-                    Text(stringResource(R.string.tool_approval_always))
+                // Not for fetch_url: "always" would leave the door open for
+                // every future page.
+                if (request.allowAlways) {
+                    TextButton(onClick = { onDecision(ApprovalDecision.ALWAYS) }) {
+                        Text(stringResource(R.string.tool_approval_always))
+                    }
                 }
             }
         },
@@ -633,6 +666,9 @@ private fun errorText(context: Context, error: ChatError): String = when (error.
     ChatErrorCode.CONNECTION -> context.getString(R.string.error_connection)
     ChatErrorCode.CONNECT_TIMEOUT ->
         context.getString(R.string.error_connect_timeout, error.detail.orEmpty())
+    ChatErrorCode.NO_FIRST_BYTE ->
+        context.getString(R.string.error_no_first_byte, error.detail.orEmpty())
+    ChatErrorCode.TOOL_LOOP_LIMIT -> context.getString(R.string.error_tool_loop_limit)
     ChatErrorCode.TIMEOUT -> context.getString(R.string.error_timeout)
     ChatErrorCode.HTTP -> context.getString(R.string.error_http, error.detail.orEmpty())
     ChatErrorCode.SERVER -> context.getString(R.string.error_server, error.detail.orEmpty())
@@ -997,6 +1033,7 @@ private fun EphemeralDialog(current: Int, onSelect: (Int) -> Unit, onDismiss: ()
 private fun MessageActionsDialog(
     message: Message,
     canRegenerate: Boolean,
+    canRetry: Boolean,
     canEdit: Boolean,
     onCopy: () -> Unit,
     onEdit: () -> Unit,
@@ -1013,6 +1050,9 @@ private fun MessageActionsDialog(
                 if (canEdit) ActionRow(Icons.Filled.Edit, stringResource(R.string.action_edit), onEdit)
                 if (canRegenerate) {
                     ActionRow(Icons.Filled.Refresh, stringResource(R.string.action_regenerate), onRegenerate)
+                }
+                if (canRetry) {
+                    ActionRow(Icons.Filled.Refresh, stringResource(R.string.action_retry), onRegenerate)
                 }
                 ActionRow(
                     Icons.Filled.Delete,

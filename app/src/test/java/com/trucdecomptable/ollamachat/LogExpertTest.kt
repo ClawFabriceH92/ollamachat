@@ -1,6 +1,7 @@
 package com.trucdecomptable.ollamachat
 
 import com.trucdecomptable.ollamachat.util.DiagnosticLog
+import com.trucdecomptable.ollamachat.update.UpdateChecker
 import com.trucdecomptable.ollamachat.util.LogExpert
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -79,17 +80,19 @@ class LogExpertTest {
         assertTrue(findings.first().action.contains("OLLAMA_HOST"))
     }
 
+    /** The line UpdateManager writes for this verdict, not one written by hand. */
+    private fun logged(manifest: Result<String>, api: Result<String>) =
+        entry("update", UpdateChecker.logLine(UpdateChecker.failureVerdict(manifest, api)))
+
+    private val quota = Result.failure<String>(
+        UpdateChecker.HttpStatusException(403, UpdateChecker.httpReason(403, "0"))
+    )
+    private val badGateway = Result.failure<String>(UpdateChecker.HttpStatusException(502, "HTTP 502"))
+    private val timedOut = Result.failure<String>(java.net.SocketTimeoutException("timeout"))
+
     @Test
     fun `an exhausted quota is explained rather than counted twice`() {
-        val findings = LogExpert.analyze(
-            listOf(
-                entry(
-                    "update",
-                    "vérification impossible : quota GitHub épuisé pour cette adresse IP " +
-                        "(fréquent derrière un VPN à sortie partagée)",
-                )
-            )
-        )
+        val findings = LogExpert.analyze(listOf(logged(quota, quota)))
         // The generic "update checks are failing" finding must stand down for it.
         assertEquals(1, findings.size)
         assertTrue(findings.first().title, findings.first().title.contains("quota"))
@@ -102,6 +105,20 @@ class LogExpertTest {
         )
         assertEquals(1, findings.size)
         assertTrue(findings.first().title.contains("mise à jour"))
+    }
+
+    @Test
+    fun `github answering with an error is not a network failure`() {
+        // "GitHub a répondu" means something replied: blaming the tunnel's
+        // missing way out for it was a confident wrong answer.
+        val findings = LogExpert.analyze(listOf(logged(badGateway, badGateway)))
+        assertTrue(findings.toString(), findings.none { it.title.contains("mise à jour n'aboutissent") })
+    }
+
+    @Test
+    fun `nothing answering is the network finding`() {
+        val findings = LogExpert.analyze(listOf(logged(timedOut, timedOut)))
+        assertTrue(findings.toString(), findings.any { it.title.contains("mise à jour") })
     }
 
     @Test

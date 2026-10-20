@@ -22,14 +22,44 @@ class OllamaErrorClassificationTest {
     private val target = "http://192.168.0.162:11434"
 
     @Test
-    fun `a timeout before any response names the address it could not reach`() {
+    fun `a timeout before any connection names the address it could not reach`() {
         val error = client.classifyCode(
             SocketTimeoutException("failed to connect after 10000ms"),
             target = target,
             responseStarted = false,
+            connected = false,
         )
         assertEquals(ChatErrorCode.CONNECT_TIMEOUT, error.code)
         assertEquals(target, error.detail)
+    }
+
+    @Test
+    fun `connected but no first token is not a network failure`() {
+        // Ollama holds its headers until the first token: a model loading for
+        // minutes used to be reported as a tunnel dropping packets.
+        val error = client.classifyCode(
+            SocketTimeoutException("timeout"),
+            target = target,
+            responseStarted = false,
+            connected = true,
+        )
+        assertEquals(ChatErrorCode.NO_FIRST_BYTE, error.code)
+        assertEquals(target, error.detail)
+    }
+
+    @Test
+    fun `a connect timeout on a retry is still a connect timeout`() {
+        // A pooled connection found dead, then a new one that never connects:
+        // what the first attempt set must not turn this into "the model is slow".
+        val error = client.classifyCode(
+            SocketTimeoutException(
+                "failed to connect to /192.168.0.162 (port 11434) from /192.168.27.65 (port 43352) after 10000ms"
+            ),
+            target = target,
+            responseStarted = false,
+            connected = true,
+        )
+        assertEquals(ChatErrorCode.CONNECT_TIMEOUT, error.code)
     }
 
     @Test
@@ -40,6 +70,14 @@ class OllamaErrorClassificationTest {
             responseStarted = true,
         )
         assertEquals(ChatErrorCode.TIMEOUT, error.code)
+    }
+
+    @Test
+    fun `a tunnel gone down is a connection error, not an unknown one`() {
+        assertEquals(
+            ChatErrorCode.CONNECTION,
+            client.classifyCode(java.net.NoRouteToHostException("no route"), target, responseStarted = false).code,
+        )
     }
 
     @Test

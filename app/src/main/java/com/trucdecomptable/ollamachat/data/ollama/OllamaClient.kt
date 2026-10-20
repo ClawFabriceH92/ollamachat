@@ -14,6 +14,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.net.ConnectException
+import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
@@ -52,13 +53,34 @@ open class OllamaClient(
          * Streaming client: long read timeout, no overall call timeout.
          * Built once — a fresh OkHttpClient per message means a new connection
          * pool and dispatcher every time, and no connection reuse at all.
+         *
+         * The read timeout covers the wait for the first token, and Ollama
+         * sends nothing at all — not even headers — until the model is loaded
+         * and the prompt evaluated. A 27B model with a long prompt can take
+         * minutes; Stop really closes the socket, so a generous bound costs
+         * nothing.
          */
-        private val streamClientInstance: OkHttpClient by lazy {
-            OkHttpClient.Builder()
-                .connectTimeout(10, TimeUnit.SECONDS)
-                .readTimeout(300, TimeUnit.SECONDS)
-                .build()
-        }
+        private val streamClientInstance: OkHttpClient by lazy { streamClientBuilder().build() }
+
+        /** The streaming client's setup, so a test can shorten a timeout and keep the rest. */
+        internal fun streamClientBuilder(): OkHttpClient.Builder = OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(600, TimeUnit.SECONDS)
+            // Network interceptors only run once a connection exists — pooled
+            // or fresh — which is exactly the fact a timeout is classified by.
+            // An attempt that fails otherwise than by waiting (a pooled
+            // connection found dead) proves nothing: OkHttp retries on a new
+            // one, and that one has to connect on its own.
+            .addNetworkInterceptor { chain ->
+                val phase = chain.request().tag(CallPhase::class.java)
+                phase?.connected = true
+                try {
+                    chain.proceed(chain.request())
+                } catch (e: IOException) {
+                    if (e !is SocketTimeoutException) phase?.connected = false
+                    throw e
+                }
+            }
 
         fun sharedStreamClient(): OkHttpClient = streamClientInstance
 
@@ -85,6 +107,23 @@ open class OllamaClient(
             }
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    /**
+     * True when anything at all answers at [target], an HTTP error included;
+     * null when Stop interrupted the check. Registered as the active call, so
+     * Stop reaches it like the answer it stands for, and kept short.
+     */
+    private suspend fun answers(target: String): Boolean? = withContext(Dispatchers.IO) {
+        val req = Request.Builder().url("$target/api/version").get().build()
+        val check = http.newBuilder().callTimeout(5, TimeUnit.SECONDS).build().newCall(req)
+        activeCall.set(check)
+        try {
+            val answered = runCatching { check.execute().use { true } }.getOrDefault(false)
+            if (check.isCanceled()) null else answered
+        } finally {
+            activeCall.compareAndSet(check, null)
         }
     }
 
@@ -229,6 +268,19 @@ open class OllamaClient(
             }
         }
 
+    /**
+     * Per-call record of how far a request got, carried as a request tag.
+     *
+     * Whether the response headers arrived is not enough to tell "never
+     * reached the server" from "the server is slow": Ollama holds its headers
+     * until the first token, so a model loading for minutes looked exactly
+     * like a tunnel dropping packets.
+     */
+    internal class CallPhase {
+        @Volatile
+        var connected = false
+    }
+
     /** Stops the streaming call in flight; the partial answer is still returned. */
     open fun cancelActiveStream() {
         activeCall.getAndSet(null)?.cancel()
@@ -255,9 +307,11 @@ open class OllamaClient(
     ): ChatStreamResult = withContext(Dispatchers.IO) {
         val payload = buildChatPayload(model, messages, options, keepAlive, tools, stream = true, think = think)
         val target = normalizeBaseUrl(baseUrl)
+        val phase = CallPhase()
         val req = Request.Builder()
             .url("$target/api/chat")
             .post(payload.toString().toRequestBody(JSON.toMediaType()))
+            .tag(CallPhase::class.java, phase)
             .build()
 
         val call = streamHttp.newCall(req)
@@ -314,11 +368,12 @@ open class OllamaClient(
                         reasoning.append(chunk.thinking)
                         onThinking(chunk.thinking)
                     }
-                    // Tool calls arrive in the FIRST chunk (done=false) in
-                    // streaming mode — parse them on every line.
+                    // Tool calls can arrive on several lines when the model asks
+                    // for more than one in a turn: they accumulate. Keeping only
+                    // the latest line silently dropped every call but the last.
                     json.optJSONObject("message")?.let { msg ->
                         val calls = parseToolCalls(msg.optJSONArray("tool_calls"))
-                        if (calls.isNotEmpty()) toolCalls = calls
+                        if (calls.isNotEmpty()) toolCalls = (toolCalls + calls).distinct()
                     }
                     if (chunk.done) {
                         evalCount = if (json.has("eval_count")) json.optInt("eval_count") else null
@@ -355,17 +410,23 @@ open class OllamaClient(
             if (call.isCanceled()) {
                 ChatStreamResult(text.toString(), thinking = reasoning.toString(), cancelled = true)
             } else {
-                ChatStreamResult(
-                    text.toString(),
-                    thinking = reasoning.toString(),
-                    error = classify(e, target, responseStarted),
-                )
+                var error = classify(e, target, responseStarted, phase.connected)
+                // "Connected, the network works" is only said once checked: a
+                // pooled connection the tunnel silently stopped carrying also
+                // gets its request written, then waits for nothing.
+                val reachable = if (error.code == ChatErrorCode.NO_FIRST_BYTE) answers(target) else true
+                if (reachable == null || call.isCanceled()) {
+                    ChatStreamResult(text.toString(), thinking = reasoning.toString(), cancelled = true)
+                } else {
+                    if (!reachable) error = ChatError(ChatErrorCode.CONNECT_TIMEOUT, target)
+                    ChatStreamResult(text.toString(), thinking = reasoning.toString(), error = error)
+                }
             }
         } catch (e: Exception) {
             ChatStreamResult(
                 text.toString(),
                 thinking = reasoning.toString(),
-                error = classify(e, target, responseStarted),
+                error = classify(e, target, responseStarted, phase.connected),
             )
         } finally {
             cancelBridge?.dispose()
@@ -497,30 +558,46 @@ open class OllamaClient(
         e: Exception,
         target: String? = null,
         responseStarted: Boolean = true,
+        connected: Boolean = true,
     ): ChatError {
         DiagnosticLog.record("ollama", e)
-        return classifyCode(e, target, responseStarted)
+        return classifyCode(e, target, responseStarted, connected)
     }
 
     /**
-     * [responseStarted] is true once the server has sent response headers.
+     * Three timeouts that mean three different things.
      *
-     * A timeout before that is not a slow server: nothing answered at all.
-     * Reporting it as "too slow" sends the user looking at the model and its
-     * context size when the packets are in fact being dropped on the way —
-     * which is what a tunnel that routes outbound but has no return path
-     * looks like from here.
+     * - [connected] false: nothing ever answered. The packets are dropped on
+     *   the way, which is what a tunnel with no return path looks like.
+     * - connected but no [responseStarted]: the server took the request and
+     *   has not produced a first token — a model loading, a long prompt, or
+     *   a server busy with another request. Calling that a network failure
+     *   sent the owner to check a VPN that was working.
+     * - both: the answer stalled mid-stream.
+     *
+     * Both flags default to true: a caller that cannot tell must not claim a
+     * failure it did not observe.
      */
     internal fun classifyCode(
         e: Exception,
         target: String? = null,
         responseStarted: Boolean = true,
+        connected: Boolean = true,
     ): ChatError = when {
-        e is SocketTimeoutException && !responseStarted ->
+        // A connect timeout says so itself (Android: "failed to connect to …",
+        // the JVM: "connect timed out"), whatever an earlier attempt left set.
+        e is SocketTimeoutException && (!connected || isConnectTimeout(e)) ->
             ChatError(ChatErrorCode.CONNECT_TIMEOUT, target)
+        e is SocketTimeoutException && !responseStarted -> ChatError(ChatErrorCode.NO_FIRST_BYTE, target)
         e is SocketTimeoutException -> ChatError(ChatErrorCode.TIMEOUT)
-        e is ConnectException || e is UnknownHostException -> ChatError(ChatErrorCode.CONNECTION)
+        e is ConnectException || e is UnknownHostException || e is NoRouteToHostException ->
+            ChatError(ChatErrorCode.CONNECTION)
         else -> ChatError(ChatErrorCode.UNKNOWN, e.message)
+    }
+
+    private fun isConnectTimeout(e: SocketTimeoutException): Boolean {
+        val message = e.message.orEmpty().lowercase()
+        return message.startsWith("failed to connect") || message.startsWith("connect timed out")
     }
 
     private fun extractError(body: String): String? = try {

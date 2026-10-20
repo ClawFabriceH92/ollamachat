@@ -35,6 +35,7 @@ class SettingsRepository(private val context: Context) {
         val VISION_DETECTED = booleanPreferencesKey("vision_detected")
         val LOCK_ENABLED = booleanPreferencesKey("lock_enabled")
         val PIN_HASH = stringPreferencesKey("pin_hash")
+        val PIN_LENGTH = intPreferencesKey("pin_length")
         val LOCK_ON_BACKGROUND = booleanPreferencesKey("lock_on_background")
         val LOCK_FAILED_ATTEMPTS = intPreferencesKey("lock_failed_attempts")
         val LOCK_UNTIL = longPreferencesKey("lock_until")
@@ -149,6 +150,7 @@ class SettingsRepository(private val context: Context) {
                 lockOnBackground = p[Keys.LOCK_ON_BACKGROUND] ?: defaults.lockOnBackground,
                 failedAttempts = p[Keys.LOCK_FAILED_ATTEMPTS] ?: 0,
                 lockedUntil = p[Keys.LOCK_UNTIL] ?: 0L,
+                pinLength = p[Keys.PIN_LENGTH],
             )
         }
 
@@ -199,7 +201,17 @@ class SettingsRepository(private val context: Context) {
     suspend fun setLastConversationId(v: Long) = context.dataStore.edit { it[Keys.LAST_CONVERSATION_ID] = v }
     suspend fun setVisionDetected(v: Boolean) = context.dataStore.edit { it[Keys.VISION_DETECTED] = v }
     suspend fun setLockEnabled(v: Boolean) = context.dataStore.edit { it[Keys.LOCK_ENABLED] = v }
-    suspend fun setPinHash(v: String) = context.dataStore.edit { it[Keys.PIN_HASH] = v }
+    /**
+     * The hash and the length are written in one edit: a lock screen that
+     * auto-submits at the wrong length is a lock screen nobody can get past.
+     */
+    suspend fun setPinHash(v: String, length: Int) = context.dataStore.edit {
+        it[Keys.PIN_HASH] = v
+        it[Keys.PIN_LENGTH] = length
+    }
+
+    /** For PINs hashed before the length was recorded. */
+    suspend fun setPinLength(length: Int) = context.dataStore.edit { it[Keys.PIN_LENGTH] = length }
     suspend fun setLockOnBackground(v: Boolean) = context.dataStore.edit { it[Keys.LOCK_ON_BACKGROUND] = v }
     suspend fun setContextCompactEnabled(v: Boolean) = context.dataStore.edit { it[Keys.CONTEXT_COMPACT_ENABLED] = v }
     suspend fun setThinkEnabled(v: Boolean) = context.dataStore.edit { it[Keys.THINK_ENABLED] = v }
@@ -296,6 +308,8 @@ data class LockConfig(
     val lockOnBackground: Boolean,
     val failedAttempts: Int = 0,
     val lockedUntil: Long = 0L,
+    /** Null for a PIN set before its length was recorded. */
+    val pinLength: Int? = null,
 ) {
     /** The lock only guards anything once a PIN actually exists. */
     val active: Boolean get() = enabled && pinHash.isNotBlank()

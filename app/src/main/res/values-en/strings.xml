@@ -17,6 +17,7 @@
     <string name="action_copy_code">Copy code</string>
     <string name="action_edit">Edit</string>
     <string name="action_regenerate">Regenerate</string>
+    <string name="action_retry">Retry</string>
     <string name="action_archive">Archive</string>
     <string name="action_restore">Restore</string>
     <string name="action_search">Search</string>
@@ -83,6 +84,7 @@
     <!-- Toasts -->
     <string name="toast_busy">Still answering — hold on a moment</string>
     <string name="toast_stopped">Answer stopped — the generated text is kept</string>
+    <string name="toast_conversation_expired">Ephemeral conversation expired: it has been deleted.</string>
     <string name="toast_searching">Searching the web…</string>
     <string name="toast_search_empty">No results — try another wording</string>
     <string name="toast_reading_page">Reading the page…</string>
@@ -97,6 +99,8 @@
     <!-- Errors -->
     <string name="error_connection">Server unreachable — check the address and your network</string>
     <string name="error_connect_timeout">Cannot connect to %1$s — no answer at all. Server down, or the network is blocking it (VPN, firewall).</string>
+    <string name="error_tool_loop_limit">Tool step limit reached without an answer. Raise “Maximum steps per message” in the settings (Agent).</string>
+    <string name="error_no_first_byte">Connected to %1$s, but no first word in 10 minutes: the model is loading, the prompt is very long, or the server is busy with another request. The network itself works.</string>
     <string name="error_timeout">The server is taking too long to answer</string>
     <string name="error_http">The server rejected the request (%1$s)</string>
     <string name="error_server">Server error: %1$s</string>
@@ -123,7 +127,7 @@
     <string name="settings_server_url_hint">http://192.168.1.50:11434</string>
     <string name="settings_scan">Auto-detect an Ollama server</string>
     <string name="settings_scanning">Scanning the network…</string>
-    <string name="scan_none">No server found. Subnets swept: %1$s. If your server’s subnet is missing, the device cannot reach it — a VPN tunnel that does not route the local network looks exactly like this.</string>
+    <string name="scan_none">No server found. Subnets swept: %1$s. If your server’s subnet is missing, the device has no dedicated route to it and the scan cannot guess it: type the address yourself, then run “Test connectivity” to see where its packets go.</string>
     <string name="scan_none_no_subnet">No server found, and no subnet to sweep: the device sees no usable local network.</string>
     <string name="settings_test">Test connection</string>
     <string name="settings_testing">Testing…</string>
@@ -160,6 +164,7 @@
     <string name="settings_mcp_help">The model can use tools from MCP servers (streamable HTTP, e.g. http://IP:PORT/mcp).</string>
     <string name="settings_mcp_name">Name (e.g. weather)</string>
     <string name="settings_mcp_url">Server URL</string>
+    <string name="settings_mcp_name_clash">Name refused: already taken, or confusable with another server or a built-in tool (fetch, web, get, save). Pick a distinct name, without “_”.</string>
 
     <string name="settings_section_prompt">Default system prompt</string>
     <string name="settings_section_appearance">Appearance</string>
@@ -297,12 +302,13 @@
     <string name="tool_approval_from_server">The model wants to run “%1$s”, provided by the MCP server “%2$s”.</string>
     <string name="tool_approval_from_app">The model wants to run “%1$s”.</string>
     <string name="tool_approval_warning">This app cannot know what a tool from an MCP server does. Read the arguments before allowing it.</string>
+    <string name="tool_approval_warning_address">The model wrote this address: whatever it contains goes to that site. Check that it carries nothing from the conversation.</string>
     <string name="tool_approval_once">Allow once</string>
     <string name="tool_approval_always">Always</string>
     <string name="tool_approval_deny">Refuse</string>
     <string name="settings_section_agent">Agent</string>
     <string name="settings_tool_approval">Ask before external tools</string>
-    <string name="settings_tool_approval_help">Built-in read-only tools (search, time, calculation, weather) always run without asking. MCP tools need approval: the app cannot know what they do.</string>
+    <string name="settings_tool_approval_help">Built-in read-only tools (search, time, calculation, weather) always run without asking. Reading a page asks every time, except for an address you typed or one a search just returned. MCP tools need approval: the app cannot know what they do.</string>
     <string name="settings_tool_allowlist">Always-allowed tools (%1$d)</string>
     <string name="settings_tool_allowlist_empty">No tool is permanently allowed.</string>
     <string name="settings_tool_revoke_all">Revoke all</string>

@@ -14,6 +14,7 @@ import com.trucdecomptable.ollamachat.data.mcp.McpClient
 import com.trucdecomptable.ollamachat.data.ollama.ModelInfo
 import com.trucdecomptable.ollamachat.data.ollama.NetworkScanner
 import com.trucdecomptable.ollamachat.data.prefs.McpServer
+import com.trucdecomptable.ollamachat.data.tools.ToolPolicy
 import com.trucdecomptable.ollamachat.data.repo.TurboProfile
 import com.trucdecomptable.ollamachat.util.ConnectivityProbe
 import com.trucdecomptable.ollamachat.util.DiagnosticLog
@@ -203,7 +204,12 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         val u = url.trim()
         if (n.isEmpty() || u.isEmpty()) return
         viewModelScope.launch {
-            settings.setMcpServers(settings.mcpServers.first() + McpServer(n, u))
+            val servers = settings.mcpServers.first()
+            if (ToolPolicy.mcpNameClashes(n, servers.map { it.name })) {
+                transient.update { it.copy(backupMessage = UiMessage(R.string.settings_mcp_name_clash)) }
+                return@launch
+            }
+            settings.setMcpServers(servers + McpServer(n, u))
             // Sessions and tool lists are cached per server: a changed list
             // must not keep answering from the old one.
             McpClient.invalidate()
@@ -265,8 +271,10 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                 client = container.ollamaClient,
             )
             val text = report.formatted()
-            // Kept in the log too, so it travels with the shared diagnostics.
-            DiagnosticLog.record("réseau", text.replace("\n", " | "))
+            // Kept in the log too, one line per entry: joined into a single
+            // entry it was cut at 400 characters, routing table included.
+            text.lines().map { it.trim() }.filter { it.isNotEmpty() }
+                .forEach { DiagnosticLog.record("réseau", it) }
             transient.update { it.copy(connectivityBusy = false, connectivityReport = text) }
         }
     }
@@ -294,7 +302,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                     testOk = null,
                 )
             }
-            val outcome = NetworkScanner.scanForOllama()
+            val outcome = NetworkScanner.scanForOllama(container.appContext)
             // The swept subnets were computed and then dropped, so a scan that
             // found nothing looked exactly like a scan that never ran. They say
             // which networks the device believes it can reach, which is the
@@ -346,7 +354,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
                 pinMessage(R.string.pin_error_wrong_old)
                 return@launch
             }
-            settings.setPinHash(PinUtils.hash(newPin))
+            settings.setPinHash(PinUtils.hash(newPin), newPin.length)
             settings.clearFailedUnlocks()
             pinMessage(R.string.pin_changed)
         }
