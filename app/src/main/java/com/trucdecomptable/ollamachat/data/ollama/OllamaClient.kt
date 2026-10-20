@@ -459,7 +459,9 @@ open class OllamaClient(
      * summarising a long history does not always do. Registered as the
      * active call, so Stop interrupts it like an answer; it then fails with
      * [Cancelled]. An answer cut by num_predict is a failure, not a result:
-     * a truncated summary would hide messages it never covered.
+     * a truncated summary would hide messages it never covered. So is a
+     * prompt that filled the window: Ollama makes room by dropping the oldest
+     * messages without a word, and those would be hidden unread.
      */
     open suspend fun chatOnce(
         baseUrl: String,
@@ -489,6 +491,7 @@ open class OllamaClient(
                 val text = StringBuilder()
                 var done = false
                 var doneReason: String? = null
+                var promptEval: Int? = null
                 while (!call.isCanceled() && !source.exhausted()) {
                     val line = source.readUtf8Line() ?: break
                     if (line.isBlank()) continue
@@ -503,13 +506,18 @@ open class OllamaClient(
                     if (chunk.done) {
                         done = true
                         doneReason = json.optString("done_reason").ifBlank { null }
+                        promptEval = if (json.has("prompt_eval_count")) json.optInt("prompt_eval_count") else null
                         break
                     }
                 }
+                val numCtx = (options["num_ctx"] as? Number)?.toInt()
+                val predict = (options["num_predict"] as? Number)?.toInt() ?: 0
+                val windowFull = promptEval != null && numCtx != null && promptEval + predict > numCtx
                 when {
                     call.isCanceled() -> Result.failure(Cancelled())
                     !done -> Result.failure(IOException("Réponse interrompue"))
                     doneReason == "length" -> Result.failure(IOException("Réponse coupée par num_predict"))
+                    windowFull -> Result.failure(IOException("Entrée tronquée : $promptEval jetons pour num_ctx $numCtx"))
                     text.isBlank() -> Result.failure(IOException("Empty response"))
                     else -> Result.success(text.toString())
                 }

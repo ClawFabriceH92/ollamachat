@@ -289,19 +289,25 @@ class ChatRepository(
             fixedTokens = ContextBudget.tokens(system) + ContextBudget.toolTokens(tools),
         )
 
+        // What the turn had to leave out, said under the answer.
+        val notes = mutableListOf<String>()
+
         // 1. Optional context compaction. Skipped in turbo: it runs a whole
         // generation before answering.
         if (!turbo) {
-            val compaction = maybeCompact(conversationId, model, baseUrl, budget, runner.numCtx, withImages = !blind)
-            if (compaction == Compaction.CANCELLED) return TurnOutcome(cancelled = true)
+            when (maybeCompact(conversationId, model, baseUrl, budget, runner.numCtx, blind)) {
+                Compaction.CANCELLED -> return TurnOutcome(cancelled = true)
+                Compaction.TOO_SMALL -> notes += "contexte trop petit pour résumer l'historique : augmente num_ctx"
+                else -> Unit
+            }
         }
 
         // 2. What this request sends: whatever fits, newest first. Ollama
         // would otherwise cut the start of the prompt itself, and the system
-        // prompt with it. What had to stay out is said under the answer.
-        val selection = ContextBudget.select(db.messageDao().listForContext(conversationId), budget)
+        // prompt with it.
+        val imageTokens = imageTokens(blind)
+        val selection = ContextBudget.select(db.messageDao().listForContext(conversationId), budget, imageTokens)
         val history = selection.messages
-        val notes = mutableListOf<String>()
         if (selection.dropped > 0) {
             notes += "${selection.dropped} message(s) ancien(s) non transmis, contexte plein"
         }
@@ -348,7 +354,7 @@ class ChatRepository(
         // What is left of the budget as tool results come in. Each output gets
         // a share of it; past that it is cut, and once nothing is left the
         // model is told to answer with what it has.
-        var contextLeft = budget - history.sumOf { ContextBudget.tokens(it) }
+        var contextLeft = budget - history.sumOf { ContextBudget.tokens(it, imageTokens) }
         var toolOutputCut = false
         val loopMax = if (turbo) 0 else settings.toolLoopMax.first()
         for (iteration in 0..loopMax) {
@@ -512,14 +518,15 @@ class ChatRepository(
     }
 
     /**
-     * Unloads a turbo model distinct from the conversation's once turbo is
-     * off: held for 30 minutes, it would sit in memory next to the model now
-     * answering.
+     * Unloads a turbo model distinct from the one answering once turbo is
+     * off: held for 30 minutes, it would sit in memory next to it.
+     * [conversationId] null, from the settings, compares it with the default
+     * model.
      */
-    suspend fun releaseTurboModel(conversationId: Long) {
+    suspend fun releaseTurboModel(conversationId: Long?) {
         val baseUrl = settings.baseUrl.first()
         val turboModel = settings.turboModel.first()
-        val own = db.conversationDao().getById(conversationId)?.model ?: settings.model.first()
+        val own = conversationId?.let { db.conversationDao().getById(it)?.model } ?: settings.model.first()
         if (baseUrl.isBlank() || turboModel.isBlank() || turboModel == own) return
         client.warmUp(baseUrl, turboModel, keepAlive = "0")
             .onFailure { DiagnosticLog.record("préchauffage", it) }
@@ -797,7 +804,7 @@ class ChatRepository(
         return tools
     }
 
-    private enum class Compaction { NONE, DONE, FAILED, CANCELLED }
+    private enum class Compaction { NONE, DONE, FAILED, CANCELLED, TOO_SMALL }
 
     /**
      * When the history no longer fits its budget and the option is enabled,
@@ -814,11 +821,18 @@ class ChatRepository(
         baseUrl: String,
         budget: Int,
         numCtx: Int,
-        withImages: Boolean,
+        blind: Boolean,
     ): Compaction {
         if (!settings.contextCompactEnabled.first()) return Compaction.NONE
         val history = db.messageDao().listForContext(conversationId)
-        val plan = ContextBudget.plan(history, budget) ?: return Compaction.NONE
+        val imageTokens = imageTokens(blind)
+        val predict = ContextBudget.summaryPredict(numCtx, budget)
+        val plan = ContextBudget.plan(history, budget, ContextBudget.summaryReserve(predict), imageTokens)
+            ?: return Compaction.NONE
+        // A summary that cannot fit with room to spare would be written again
+        // on every message, each time a generation on a large model. Better
+        // to say the window is too small.
+        if (!ContextBudget.canCompact(numCtx, budget)) return Compaction.TOO_SMALL
         // A failed summary is not retried on every message: on a large model
         // each attempt costs minutes before the answer even starts.
         compactionFailures[conversationId]?.let { (size, at) ->
@@ -826,16 +840,20 @@ class ChatRepository(
             val waited = System.currentTimeMillis() - at >= COMPACTION_RETRY_MS
             if (!grown && !waited) return Compaction.NONE
         }
+        // Asked for a length it can reach: an answer cut by num_predict is
+        // refused, and a summary that runs on would be.
+        val instruction = SUMMARY_INSTRUCTION + " Ne dépasse pas ${predict / 2} mots."
         val slice = ContextBudget.sliceToSummarize(
             plan.summarize,
-            ContextBudget.summaryInputBudget(numCtx, SUMMARY_INSTRUCTION),
+            ContextBudget.summaryInputBudget(numCtx, predict, instruction),
+            imageTokens,
         )
         val summary = client.chatOnce(
             baseUrl = baseUrl,
             model = model,
-            messages = listOf(OllamaChatMessage(role = "system", content = SUMMARY_INSTRUCTION)) +
-                slice.map { it.toChatMessage(withImages) },
-            options = mapOf("num_predict" to ContextBudget.summaryPredict(numCtx), "num_ctx" to numCtx),
+            messages = listOf(OllamaChatMessage(role = "system", content = instruction)) +
+                slice.map { it.toChatMessage(withImages = !blind) },
+            options = mapOf("num_predict" to predict, "num_ctx" to numCtx),
             // Reasoning would spend the summary's budget and leave it empty or cut.
             think = false,
         ).map { stripThinking(it).trim() }
@@ -861,7 +879,7 @@ class ChatRepository(
                     conversationId = conversationId,
                     role = "system",
                     contentType = ContextBudget.CONTENT_SUMMARY,
-                    content = "${ContextBudget.SUMMARY_PREFIX} (résumé des messages précédents) :\n$summary",
+                    content = ContextBudget.SUMMARY_HEADER + summary,
                     createdAt = next.createdAt - 1,
                 )
             )
@@ -869,6 +887,10 @@ class ChatRepository(
         compactionFailures.remove(conversationId)
         return Compaction.DONE
     }
+
+    /** What one image costs in a request: a short note instead, for a model known to be blind. */
+    private fun imageTokens(blind: Boolean): Int =
+        if (blind) ContextBudget.tokens(IMAGE_WITHHELD) else ContextBudget.IMAGE_TOKENS
 
     /** Reasoning some models write inline even when asked not to think. */
     private fun stripThinking(text: String): String = THINK_BLOCK.replace(text, "")

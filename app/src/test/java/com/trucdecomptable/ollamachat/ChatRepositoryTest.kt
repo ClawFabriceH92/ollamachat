@@ -730,6 +730,8 @@ class ChatRepositoryTest {
     fun `compaction hides the old messages instead of deleting them`() = runBlocking {
         settings.setNumCtx(2048)
         settings.setContextCompactEnabled(true)
+        // Tool definitions would leave too small a window to summarise.
+        settings.setToolsEnabled(false)
         val id = newConversation()
         repeat(20) { i ->
             db.messageDao().insert(
@@ -938,6 +940,7 @@ class ChatRepositoryTest {
     fun `stop during compaction ends the turn without starting the answer`() = runBlocking {
         settings.setNumCtx(2048)
         settings.setContextCompactEnabled(true)
+        settings.setToolsEnabled(false)
         val id = newConversation()
         seedHeavyHistory(id)
         val client = FakeClient(mutableListOf(ChatStreamResult("trop tard")))
@@ -947,6 +950,24 @@ class ChatRepositoryTest {
 
         assertTrue(result.cancelled)
         assertTrue("la réponse a démarré quand même", client.requests.isEmpty())
+    }
+
+    @Test
+    fun `a window too small to summarise says so instead of summarising every message`() = runBlocking {
+        // With the tool definitions, a window of 2 048 leaves a few hundred
+        // tokens of history: a summary would not fit once written.
+        settings.setNumCtx(2048)
+        settings.setContextCompactEnabled(true)
+        val id = newConversation()
+        seedHeavyHistory(id)
+        val client = FakeClient(mutableListOf(ChatStreamResult("r1"), ChatStreamResult("r2")))
+        val repo = repository(client)
+
+        send(repo, id, "q1")
+        val second = send(repo, id, "q2")
+
+        assertEquals(0, client.compactionCalls)
+        assertTrue(second.stats.orEmpty().contains("trop petit"))
     }
 
     @Test

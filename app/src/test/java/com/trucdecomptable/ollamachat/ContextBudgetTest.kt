@@ -15,10 +15,16 @@ class ContextBudgetTest {
     private fun message(content: String, imagePath: String? = null, role: String = "user") =
         Message(conversationId = 1, role = role, content = content, imagePaths = imagePath)
 
-    /** Alternating user/assistant turns of [chars] characters, the last one a question. */
+    /**
+     * Alternating user/assistant turns of [chars] characters, the last one a
+     * question. Letters only: digits count one token each.
+     */
     private fun dialogue(count: Int, chars: Int) = List(count) { i ->
-        message("$i:" + "x".repeat(chars), role = if ((count - 1 - i) % 2 == 0) "user" else "assistant")
+        message("${'a' + i % 26}:" + "x".repeat(chars), role = if ((count - 1 - i) % 2 == 0) "user" else "assistant")
     }
+
+    /** What a default summary of a window of 8 192 reserves. */
+    private val reserve8k = ContextBudget.summaryReserve(1024)
 
     @Test
     fun `text is estimated at three characters per token`() {
@@ -29,9 +35,21 @@ class ContextBudgetTest {
     }
 
     @Test
-    fun `every image is counted`() {
+    fun `every digit is a token`() {
+        // Qwen splits numbers digit by digit: a column of amounts is dense.
+        assertEquals(10, ContextBudget.tokens("1234567890"))
+        assertEquals(9, ContextBudget.tokens("12 345,67 €"))
+    }
+
+    @Test
+    fun `every image is counted, unless it is not sent`() {
         assertEquals(1004, ContextBudget.estimateTokens(listOf(message("", "/tmp/a.jpg")), ""))
         assertEquals(2004, ContextBudget.estimateTokens(listOf(message("", "/tmp/a.jpg\n/tmp/b.jpg")), ""))
+        // A blind model gets a one-line note in place of each image.
+        assertEquals(24, ContextBudget.tokens(message("", "/tmp/a.jpg"), imageTokens = 20))
+        // The legacy inline copy is not sent next to the stored one.
+        val both = Message(conversationId = 1, role = "user", content = "", imagePaths = "/tmp/a.jpg", imageBase64 = "AAAA")
+        assertEquals(1004, ContextBudget.tokens(both))
     }
 
     @Test
@@ -58,7 +76,7 @@ class ContextBudgetTest {
         assertEquals(history, selection.messages)
         assertEquals(0, selection.dropped)
         assertFalse(selection.overflow)
-        assertNull(ContextBudget.plan(history, 5_000))
+        assertNull(ContextBudget.plan(history, 5_000, reserve8k))
     }
 
     @Test
@@ -99,30 +117,44 @@ class ContextBudgetTest {
     }
 
     @Test
-    fun `compaction keeps about half the budget and summarises the rest`() {
-        val history = dialogue(20, 300)
-        val budget = 1_000
-        val plan = assertNotNullPlan(history, budget)
+    fun `compaction leaves room for its summary, so the next message does not summarise again`() {
+        val history = dialogue(60, 300) // 105 tokens each
+        val budget = 5_000
+        val plan = assertNotNullPlan(history, budget, reserve8k)
         assertEquals(history, plan.summarize + plan.keep)
-        assertTrue(plan.keep.sumOf { ContextBudget.tokens(it) } <= budget / 2)
         assertEquals(history.last(), plan.keep.last())
-        // After it, the history is far enough below the budget that the next
-        // message does not summarise again.
-        assertNull(ContextBudget.plan(plan.keep + message("x".repeat(300)), budget))
+        // The longest summary the request allows, written at the estimate's
+        // worst, plus what was kept verbatim: about half the budget.
+        val summary = message(ContextBudget.SUMMARY_HEADER + "r".repeat(1024 * 4), role = "system")
+        val after = listOf(summary) + plan.keep
+        assertTrue(after.sumOf { ContextBudget.tokens(it) } <= budget / 2 + 50)
+        // A new exchange still fits: no second summary straight away.
+        assertNull(ContextBudget.plan(after + dialogue(2, 300), budget, reserve8k))
     }
 
     @Test
     fun `a huge recent message is summarised, not kept verbatim forever`() {
         val document = message("d".repeat(60_000), role = "system")
         val history = listOf(message("q1"), message("r1", role = "assistant"), document, message("q2"))
-        val plan = assertNotNullPlan(history, 2_000)
+        val plan = assertNotNullPlan(history, 5_000, reserve8k)
         assertTrue(document in plan.summarize)
         assertEquals(listOf(history.last()), plan.keep)
     }
 
     @Test
     fun `nothing older than the question means nothing to compact`() {
-        assertNull(ContextBudget.plan(listOf(message("x".repeat(60_000))), 100))
+        assertNull(ContextBudget.plan(listOf(message("x".repeat(60_000))), 100, 10))
+    }
+
+    @Test
+    fun `the summary's length follows the budget, and too small a budget is not summarised`() {
+        assertEquals(1024, ContextBudget.summaryPredict(8192, 5_000))
+        assertEquals(500, ContextBudget.summaryPredict(8192, 2_000))
+        assertEquals(512, ContextBudget.summaryPredict(2048, 5_000))
+        assertTrue(ContextBudget.canCompact(8192, 5_000))
+        // A summary of a few dozen words, written again on every message.
+        assertFalse(ContextBudget.canCompact(8192, 600))
+        assertFalse(ContextBudget.canCompact(8192, 0))
     }
 
     @Test
@@ -130,6 +162,18 @@ class ContextBudgetTest {
         val toSummarize = dialogue(10, 3_000) // 1 005 tokens each
         val slice = ContextBudget.sliceToSummarize(toSummarize, 3_500)
         assertEquals(toSummarize.take(3), slice)
+    }
+
+    @Test
+    fun `a document after a summary is cut in, not left for ever`() {
+        val summary = message(ContextBudget.SUMMARY_HEADER + "Q1, R1.", role = "system")
+        val document = message("d".repeat(60_000), role = "system")
+        val slice = ContextBudget.sliceToSummarize(listOf(summary, document, message("q")), 6_000)
+        // Folding the summary alone would summarise a summary on every message.
+        assertEquals(2, slice.size)
+        assertEquals(summary, slice[0])
+        assertTrue(slice[1].content.endsWith(ContextBudget.TRUNCATED_MARK))
+        assertTrue(slice.sumOf { ContextBudget.tokens(it) } <= 6_000)
     }
 
     @Test
@@ -145,9 +189,8 @@ class ContextBudgetTest {
     @Test
     fun `the summary window leaves room for the summary`() {
         val instruction = "Résume."
-        val budget = ContextBudget.summaryInputBudget(8192, instruction)
+        val budget = ContextBudget.summaryInputBudget(8192, 1024, instruction)
         assertEquals(8192 - 1024 - ContextBudget.tokens(instruction) - ContextBudget.TEMPLATE_TOKENS, budget)
-        assertEquals(512, ContextBudget.summaryPredict(2048))
     }
 
     @Test
@@ -156,6 +199,9 @@ class ContextBudgetTest {
         val cut = ContextBudget.fitToolOutput(page, 1_000)
         assertTrue(cut.endsWith(ContextBudget.TRUNCATED_MARK))
         assertTrue(ContextBudget.tokens(cut) <= 1_000)
+        // Figures are denser: the cut still holds.
+        val figures = ContextBudget.fitToolOutput("4".repeat(40_000), 1_000)
+        assertTrue(ContextBudget.tokens(figures) <= 1_000)
         assertEquals("court", ContextBudget.fitToolOutput("court", 1_000))
         assertEquals(ContextBudget.TOOL_OUTPUT_OMITTED, ContextBudget.fitToolOutput(page, 10))
         assertEquals(ContextBudget.TOOL_OUTPUT_OMITTED, ContextBudget.fitToolOutput(page, -50))
@@ -172,8 +218,8 @@ class ContextBudgetTest {
         assertFalse(ContextBudget.isSummary(message("Contexte compacté automatiquement : …", role = "user")))
     }
 
-    private fun assertNotNullPlan(history: List<Message>, budget: Int): ContextBudget.Plan {
-        val plan = ContextBudget.plan(history, budget)
+    private fun assertNotNullPlan(history: List<Message>, budget: Int, reserve: Int): ContextBudget.Plan {
+        val plan = ContextBudget.plan(history, budget, reserve)
         assertNotNull("aucune compaction prévue", plan)
         return plan!!
     }

@@ -141,13 +141,14 @@ object Calculator {
     }
 
     /**
-     * Twelve significant digits, written out in full: "$value" printed
-     * 12345678.9 as 1.23456789E7, and a model copies what it reads.
+     * Fifteen significant digits, what a double holds exactly, written out in
+     * full: "$value" printed 12345678.9 as 1.23456789E7, and a model copies
+     * what it reads.
      */
     fun format(value: Double): String {
         if (value == 0.0) return "0"
         val text = BigDecimal.valueOf(value)
-            .round(MathContext(12, RoundingMode.HALF_EVEN))
+            .round(MathContext(15, RoundingMode.HALF_EVEN))
             .stripTrailingZeros()
             .toPlainString()
         return if (abs(value) >= 1e15) "$text (au-delà de 15 chiffres, précision non garantie)" else text
@@ -185,7 +186,16 @@ object Calculator {
             var value = parseTerm()
             while (peek() == '+' || peek() == '-') {
                 val op = consume()
+                val start = pos
                 val rhs = parseTerm()
+                // "1000+20%" reads as 1200 to a person and as 1000.2 here:
+                // refused rather than answered silently with either.
+                val term = input.substring(start, pos)
+                if (term.endsWith('%') && term.none { it == '*' || it == '/' }) {
+                    throw IllegalArgumentException(
+                        "Pourcentage ambigu : écris 1000*1.2 pour ajouter 20 %, ou 1000*20% pour 20 % de 1000"
+                    )
+                }
                 value = if (op == '+') value + rhs else value - rhs
             }
             return value

@@ -42,9 +42,11 @@ class CalculatorTest {
     }
 
     @Test
-    fun `results are written out in full, to twelve significant digits`() {
+    fun `results are written out in full, to fifteen significant digits`() {
         assertEquals("12345678.9", Calculator.format(12345678.9))
-        assertEquals("0.000333333333333", Calculator.format(1.0 / 3000))
+        assertEquals("0.000333333333333333", Calculator.format(1.0 / 3000))
+        // Exact in a double, so exact in the answer: twelve digits made it 1234567890120.
+        assertEquals("1234567890124", Calculator.format(Calculator.evaluate("1234567890123+1")))
         assertEquals("0.3", Calculator.format(0.1 + 0.2))
         assertEquals("0", Calculator.format(-0.0))
         assertEquals("-2.5", Calculator.format(-2.5))
@@ -70,6 +72,14 @@ class CalculatorTest {
         assertEquals(0.15, Calculator.evaluate("15%"), 1e-12)
         assertEquals(30.0, Calculator.evaluate("200*15%"), 1e-12)
         assertEquals(-0.05, Calculator.evaluate("-5%"), 1e-12)
+        assertEquals(1200.0, Calculator.evaluate("1000+1000*20%"), 1e-9)
+    }
+
+    @Test
+    fun `a percentage added to a number is refused rather than guessed`() {
+        // 1200 to a person, 1000.2 to the parser.
+        assertThrows(IllegalArgumentException::class.java) { Calculator.evaluate("1000+20%") }
+        assertThrows(IllegalArgumentException::class.java) { Calculator.evaluate("1000-(5)%") }
     }
 
     @Test

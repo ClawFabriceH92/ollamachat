@@ -101,13 +101,33 @@ class ChatStreamWireTest {
     }
 
     @Test
+    fun `chatOnce refuses a summary whose input filled the window`() = runBlocking {
+        server.enqueue(
+            MockResponse().setBody(
+                """
+                {"message":{"role":"assistant","content":"Résumé"},"done":false}
+                {"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":8000}
+                """.trimIndent()
+            )
+        )
+        // Ollama made room by dropping the oldest messages: they were never read.
+        val result = OllamaClient().chatOnce(
+            url(), "qwen3", question,
+            options = mapOf("num_ctx" to 8192, "num_predict" to 1024),
+        )
+        assertTrue(result.isFailure)
+    }
+
+    @Test
     fun `stop interrupts chatOnce`() = runBlocking {
         val line = "{\"message\":{\"role\":\"assistant\",\"content\":\"a\"},\"done\":false}\n"
-        // About two minutes of body: the stop has to be what ends it.
+        // About three minutes of body: the stop has to be what ends it.
         server.enqueue(MockResponse().setBody(line.repeat(50)).throttleBody(16, 1, TimeUnit.SECONDS))
         val client = OllamaClient()
+        // Once the server has the request the call is registered: it is set
+        // before execute(), so the stop cannot arrive too early.
         val stopper = Thread {
-            Thread.sleep(500)
+            server.takeRequest(10, TimeUnit.SECONDS)
             client.cancelActiveStream()
         }
         stopper.start()

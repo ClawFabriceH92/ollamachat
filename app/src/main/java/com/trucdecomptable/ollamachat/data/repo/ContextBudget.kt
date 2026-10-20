@@ -20,9 +20,9 @@ import com.trucdecomptable.ollamachat.data.ollama.ToolDef
 object ContextBudget {
 
     /**
-     * French, figures and JSON split into more tokens than English prose:
-     * about three characters each, not four. Overestimating costs a little
-     * history; underestimating costs the start of the prompt.
+     * French and JSON split into more tokens than English prose: about three
+     * characters each, not four. Overestimating costs a little history;
+     * underestimating costs the start of the prompt.
      */
     const val CHARS_PER_TOKEN = 3
 
@@ -44,6 +44,9 @@ object ContextBudget {
     /** The summary request asks for at most this much. */
     const val SUMMARY_PREDICT = 1024
 
+    /** Below this, a summary says too little to be worth a generation. */
+    const val MIN_SUMMARY_PREDICT = 256
+
     /** A tool output given less room than this is omitted rather than cut to nothing. */
     const val MIN_TOOL_TOKENS = 150
 
@@ -53,16 +56,34 @@ object ContextBudget {
     /** Summaries written before they were marked are recognised by their opening words. */
     const val SUMMARY_PREFIX = "Contexte compacté automatiquement"
 
+    /** Opens every summary the app writes. */
+    const val SUMMARY_HEADER = "$SUMMARY_PREFIX (résumé des messages précédents) :\n"
+
     const val TRUNCATED_MARK = "\n[… tronqué : contexte limité …]"
 
     const val TOOL_OUTPUT_OMITTED =
         "Sortie omise : le contexte du modèle est plein. Réponds avec ce que tu as déjà."
 
-    fun tokens(text: String): Int = (text.length + CHARS_PER_TOKEN - 1) / CHARS_PER_TOKEN
+    /**
+     * Qwen's tokenizer gives every digit a token of its own: an imported
+     * statement or a CSV of amounts runs at one or two characters per token,
+     * so digits are counted one each.
+     */
+    fun tokens(text: String): Int {
+        val digits = text.count { it in '0'..'9' }
+        return digits + (text.length - digits + CHARS_PER_TOKEN - 1) / CHARS_PER_TOKEN
+    }
 
-    fun tokens(m: Message): Int =
-        tokens(m.content) + MESSAGE_OVERHEAD +
-            IMAGE_TOKENS * (m.images.size + if (m.imageBase64 != null) 1 else 0)
+    /**
+     * [imageTokens] is what one image costs in this request: a model known to
+     * be blind gets a one-line note in its place, not a thousand tokens.
+     */
+    fun tokens(m: Message, imageTokens: Int = IMAGE_TOKENS): Int =
+        tokens(m.content) + MESSAGE_OVERHEAD + imageTokens * imageCount(m)
+
+    /** As sent: the legacy inline image only when there are no stored ones. */
+    private fun imageCount(m: Message): Int =
+        if (m.images.isNotEmpty()) m.images.size else if (m.imageBase64 != null) 1 else 0
 
     /** The tool definitions travel with every request, as JSON. */
     fun toolTokens(tools: List<ToolDef>): Int =
@@ -110,7 +131,7 @@ object ContextBudget {
      * of six messages turbo used before slid on every message, so the whole
      * prompt was evaluated again each time.
      */
-    fun select(history: List<Message>, budget: Int): Selection {
+    fun select(history: List<Message>, budget: Int, imageTokens: Int = IMAGE_TOKENS): Selection {
         if (history.isEmpty()) return Selection(history, 0, false)
         val lastUser = history.indexOfLast { it.role == "user" }
         val mustFrom = if (lastUser >= 0) lastUser else history.lastIndex
@@ -118,16 +139,16 @@ object ContextBudget {
         var left = budget
         for (i in mustFrom..history.lastIndex) {
             chosen[i] = true
-            left -= tokens(history[i])
+            left -= tokens(history[i], imageTokens)
         }
         val summary = (0 until mustFrom).lastOrNull { isSummary(history[it]) }
-        if (summary != null && tokens(history[summary]) <= left) {
+        if (summary != null && tokens(history[summary], imageTokens) <= left) {
             chosen[summary] = true
-            left -= tokens(history[summary])
+            left -= tokens(history[summary], imageTokens)
         }
         for (i in mustFrom - 1 downTo 0) {
             if (chosen[i]) continue
-            val cost = tokens(history[i])
+            val cost = tokens(history[i], imageTokens)
             when {
                 cost <= left -> {
                     chosen[i] = true
@@ -145,24 +166,30 @@ object ContextBudget {
     data class Plan(val summarize: List<Message>, val keep: List<Message>)
 
     /**
-     * Null when the history fits. Otherwise the recent messages kept verbatim
-     * fill about half the budget, always at least the question being
-     * answered, and everything older is summarised: a long document too,
-     * since that is usually what overflowed.
+     * Null when the history fits. Otherwise the summary and the recent
+     * messages kept verbatim fill about half the budget, the question being
+     * answered always among them, and everything older is summarised: a long
+     * document too, since that is usually what overflowed.
      *
-     * Keeping a fixed eight messages instead meant that when those eight did
-     * not fit, every message ran a new summary on a 27B model and still sent
-     * too much.
+     * The summary's own room is set aside first: left out, summary and kept
+     * messages together could pass the budget again, and the next message
+     * summarised the summary. Keeping a fixed eight messages, as before,
+     * failed the same way whenever those eight did not fit.
      */
-    fun plan(history: List<Message>, budget: Int): Plan? {
-        if (history.sumOf { tokens(it) } <= budget) return null
+    fun plan(
+        history: List<Message>,
+        budget: Int,
+        summaryReserve: Int,
+        imageTokens: Int = IMAGE_TOKENS,
+    ): Plan? {
+        if (history.sumOf { tokens(it, imageTokens) } <= budget) return null
         val lastUser = history.indexOfLast { it.role == "user" }
         val mustFrom = if (lastUser >= 0) lastUser else history.lastIndex
-        val target = (budget * TARGET_RATIO).toInt()
+        val target = ((budget * TARGET_RATIO).toInt() - summaryReserve).coerceAtLeast(0)
         var kept = 0
         var cut = history.size
         for (i in history.lastIndex downTo 0) {
-            val cost = tokens(history[i])
+            val cost = tokens(history[i], imageTokens)
             if (i < mustFrom && kept + cost > target) break
             kept += cost
             cut = i
@@ -171,41 +198,69 @@ object ContextBudget {
         return Plan(history.subList(0, cut), history.subList(cut, history.size))
     }
 
-    fun summaryPredict(numCtx: Int): Int = minOf(SUMMARY_PREDICT, numCtx / 4)
+    /**
+     * How long a summary may be: no more than a quarter of the history
+     * budget, so that it always fits with room to spare.
+     */
+    fun summaryPredict(numCtx: Int, budget: Int): Int = minOf(SUMMARY_PREDICT, numCtx / 4, budget / 4)
+
+    /**
+     * Too small a budget cannot be helped by a summary: it would be written,
+     * then not fit, on every message. Raising num_ctx is the remedy.
+     */
+    fun canCompact(numCtx: Int, budget: Int): Boolean = summaryPredict(numCtx, budget) >= MIN_SUMMARY_PREDICT
+
+    /**
+     * What a summary of [predict] tokens takes in the history, as this file
+     * counts: the model counts its own tokens, and its French runs to more
+     * than three characters each.
+     */
+    fun summaryReserve(predict: Int): Int = predict * 4 / 3 + tokens(SUMMARY_HEADER) + MESSAGE_OVERHEAD
 
     /** What one summary request may send, so Ollama does not cut the start of what it summarises. */
-    fun summaryInputBudget(numCtx: Int, instruction: String): Int =
-        (numCtx - summaryPredict(numCtx) - tokens(instruction) - TEMPLATE_TOKENS).coerceAtLeast(0)
+    fun summaryInputBudget(numCtx: Int, predict: Int, instruction: String): Int =
+        (numCtx - predict - tokens(instruction) - TEMPLATE_TOKENS).coerceAtLeast(0)
 
     /**
      * The oldest messages of [toSummarize] that one summary request can take.
      * Only those are folded; the rest waits for the next compaction, with
      * this summary at its head.
      *
-     * A first message larger than the whole budget, an imported document
-     * say, goes in cut rather than blocking compaction for good: a summary
-     * is lossy anyway, and that document could never fit in this window.
+     * A message larger than what is left, an imported document say, goes in
+     * cut when nothing but summaries precede it. Otherwise it would block
+     * compaction for good: each attempt would fold the previous summary
+     * alone, a summary of a summary on every message, and never reach it. A
+     * summary is lossy anyway, and that document could never fit this window.
      */
-    fun sliceToSummarize(toSummarize: List<Message>, budget: Int): List<Message> {
+    fun sliceToSummarize(
+        toSummarize: List<Message>,
+        budget: Int,
+        imageTokens: Int = IMAGE_TOKENS,
+    ): List<Message> {
         val slice = mutableListOf<Message>()
         var left = budget
         for (m in toSummarize) {
-            val cost = tokens(m)
+            val cost = tokens(m, imageTokens)
             if (cost <= left) {
                 slice += m
                 left -= cost
             } else {
-                if (slice.isEmpty()) slice += cut(m, left)
+                if (slice.all { isSummary(it) }) slice += cut(m, left)
                 break
             }
         }
         return slice
     }
 
+    /** [m] shortened to fit [budgetTokens]; images are not kept, they cannot be cut. */
     private fun cut(m: Message, budgetTokens: Int): Message {
-        val chars = ((budgetTokens - MESSAGE_OVERHEAD) * CHARS_PER_TOKEN - TRUNCATED_MARK.length)
-            .coerceAtLeast(0)
-        return m.copy(content = m.content.take(chars) + TRUNCATED_MARK)
+        var chars = ((budgetTokens - MESSAGE_OVERHEAD) * CHARS_PER_TOKEN - TRUNCATED_MARK.length)
+            .coerceIn(0, m.content.length)
+        // Digits count one token each: shorten until the estimate agrees.
+        while (chars > 0 && tokens(m.content.take(chars) + TRUNCATED_MARK) + MESSAGE_OVERHEAD > budgetTokens) {
+            chars = chars * 9 / 10
+        }
+        return m.copy(content = m.content.take(chars) + TRUNCATED_MARK, imagePaths = null, imageBase64 = null)
     }
 
     /**
@@ -214,9 +269,12 @@ object ContextBudget {
      * some 13 000 tokens against a window of 8 192, and what Ollama cut to
      * make room was the start of the prompt.
      */
-    fun fitToolOutput(text: String, budgetTokens: Int): String = when {
-        tokens(text) <= budgetTokens -> text
-        budgetTokens < MIN_TOOL_TOKENS -> TOOL_OUTPUT_OMITTED
-        else -> text.take(budgetTokens * CHARS_PER_TOKEN - TRUNCATED_MARK.length) + TRUNCATED_MARK
+    fun fitToolOutput(text: String, budgetTokens: Int): String {
+        if (tokens(text) <= budgetTokens) return text
+        if (budgetTokens < MIN_TOOL_TOKENS) return TOOL_OUTPUT_OMITTED
+        var chars = budgetTokens * CHARS_PER_TOKEN - TRUNCATED_MARK.length
+        // Digits count one token each: shorten until the estimate agrees.
+        while (chars > 0 && tokens(text.take(chars) + TRUNCATED_MARK) > budgetTokens) chars = chars * 9 / 10
+        return text.take(chars) + TRUNCATED_MARK
     }
 }

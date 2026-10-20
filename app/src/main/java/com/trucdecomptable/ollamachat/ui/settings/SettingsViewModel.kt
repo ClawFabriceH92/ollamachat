@@ -178,8 +178,13 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
      * The warm-up is left to the chat: from here it loaded the default model,
      * not the one of the conversation turbo was switched on for, and without
      * its window, so the first message loaded the model a second time.
+     * Switching off releases a distinct turbo model here too, since no chat
+     * may be open to do it.
      */
-    fun onTurboEnabledChange(enabled: Boolean) = launchSetting { settings.setTurboEnabled(enabled) }
+    fun onTurboEnabledChange(enabled: Boolean) = launchSetting {
+        settings.setTurboEnabled(enabled)
+        if (!enabled) container.chatRepository.releaseTurboModel(null)
+    }
 
     /** Turning the lock on without a code would leave the app effectively open. */
     fun onLockEnabledChange(v: Boolean) {
