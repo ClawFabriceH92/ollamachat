@@ -194,6 +194,14 @@ class ConnectivityProbeTest {
     }
 
     @Test
+    fun `a proxy in front of a stopped ollama is told from a wrong port`() {
+        val r = report(serverOk = false, updateOk = true, serverReached = true, route = ServerRoute.VPN_SPECIFIC)
+        val v = verdict(r.copy(legs = r.legs.map { if (it.name.startsWith(ConnectivityProbe.SERVER)) it.copy(detail = "HTTP 502") else it }))
+        assertTrue(v, v.contains("proxy"))
+        assertFalse(v, v.contains("port"))
+    }
+
+    @Test
     fun `a refusal is told from silence`() {
         val refused = java.net.ConnectException(
             "failed to connect to /192.168.0.162 (port 11434) from /192.168.27.65 (port 43352) after 10000ms: " +

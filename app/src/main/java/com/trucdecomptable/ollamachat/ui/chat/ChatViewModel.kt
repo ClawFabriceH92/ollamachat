@@ -231,6 +231,7 @@ class ChatViewModel(
         // The repository is application-scoped and only one chat is on screen,
         // so the live view model is the one that answers.
         repo.approver = approver
+        repo.shownConversationId = conversationId
         // Turbo switched on, here or in the settings while this chat waited
         // underneath: load the model it will answer with, so the first message
         // does not pay for a cold model. Switched off: release a distinct
@@ -633,7 +634,10 @@ class ChatViewModel(
     override fun onCleared() {
         // Only stand down if a newer view model has not already taken over:
         // clobbering its approver would leave it unable to ask.
-        if (repo.approver === approver) repo.approver = ToolApprover.DenyAll
+        if (repo.approver === approver) {
+            repo.approver = ToolApprover.DenyAll
+            repo.shownConversationId = null
+        }
         super.onCleared()
         publishStream(force = true)
     }

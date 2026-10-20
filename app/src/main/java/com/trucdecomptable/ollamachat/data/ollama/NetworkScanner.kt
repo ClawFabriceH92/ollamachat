@@ -132,7 +132,13 @@ object NetworkScanner {
                         // but only when the interface spans it: a /32 tunnel
                         // address covers nothing, and a server at 10.8.0.1
                         // behind a 10.8.0.2/32 tunnel lives in the route alone.
-                        own.any { it.prefixLength <= destination.prefixLength && route.matches(it.address) } -> null
+                        // A wider route around a /32 tunnel address would be
+                        // scanned around its network address, far from any
+                        // peer (Tailscale's 100.64.0.0/10): left out as before.
+                        own.any {
+                            route.matches(it.address) &&
+                                (it.prefixLength <= destination.prefixLength || destination.prefixLength < 24)
+                        } -> null
                         else -> address.hostAddress?.let { NetworkInfo(it, destination.prefixLength, iface) }
                     }
                 }

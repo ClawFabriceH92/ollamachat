@@ -122,6 +122,10 @@ class ChatRepository(
     @Volatile
     var approver: ToolApprover = ToolApprover.DenyAll
 
+    /** The conversation the live chat screen shows, if one is open. */
+    @Volatile
+    var shownConversationId: Long? = null
+
     /**
      * Stops the answer in progress. The tokens already generated are kept and
      * persisted — pressing stop should not throw away a half-written answer.
@@ -531,9 +535,12 @@ class ChatRepository(
         val turboModel = settings.turboModel.first()
         val own = conversationId?.let { db.conversationDao().getById(it)?.model } ?: settings.model.first()
         if (baseUrl.isBlank() || turboModel.isBlank() || turboModel == own) return
-        // From the settings no conversation is known: one using the turbo
-        // model as its own may be open underneath, and would reload it.
-        if (conversationId == null && db.conversationDao().countUsingModel(turboModel) > 0) return
+        // From the settings: the conversation on screen underneath, if any,
+        // may answer with the turbo model as its own, and would reload it.
+        if (conversationId == null) {
+            val shown = shownConversationId?.let { db.conversationDao().getById(it)?.model }
+            if (shown == turboModel) return
+        }
         client.warmUp(baseUrl, turboModel, keepAlive = "0")
             .onFailure { DiagnosticLog.record("préchauffage", it) }
     }
@@ -859,16 +866,23 @@ class ChatRepository(
         // Narrowed after Ollama reported the window full: the estimate ran
         // short for this content, and the same slice would fail the same way.
         val shrink = compactionShrink[conversationId] ?: 1
-        val slice = ContextBudget.sliceToSummarize(
-            plan.summarize,
-            ContextBudget.summaryInputBudget(numCtx, predict, instruction) / shrink,
-            imageTokens,
-        )
+        val inputBudget = ContextBudget.summaryInputBudget(numCtx, predict, instruction)
+        val slice = ContextBudget.sliceToSummarize(plan.summarize, inputBudget / shrink, imageTokens, inputBudget)
+        if (slice.all { ContextBudget.isSummary(it) }) {
+            // Nothing new fits this request: tried again later, not every
+            // message, and at full size, since the narrowing is what kept the
+            // next message out.
+            compactionFailures[conversationId] = history.size to System.currentTimeMillis()
+            compactionShrink.remove(conversationId)
+            return Compaction.FAILED
+        }
         val summary = client.chatOnce(
             baseUrl = baseUrl,
             model = model,
-            messages = listOf(OllamaChatMessage(role = "system", content = instruction)) +
-                slice.map { it.toChatMessage(withImages = !blind) },
+            messages = listOf(
+                OllamaChatMessage(role = "system", content = instruction),
+                transcriptOf(slice, withImages = !blind),
+            ),
             options = mapOf("num_predict" to predict, "num_ctx" to numCtx),
             // Reasoning would spend the summary's budget and leave it empty or cut.
             think = false,
@@ -908,6 +922,26 @@ class ChatRepository(
         compactionFailures.remove(conversationId)
         compactionShrink.remove(conversationId)
         return Compaction.DONE
+    }
+
+    /**
+     * The messages to summarise as one user message. Sent as separate
+     * messages, the oldest could be dropped by Ollama without a word when the
+     * prompt overflowed, and hidden unread; it always keeps the last message,
+     * so with a single one it can only truncate it, which fills the window
+     * and is detected.
+     */
+    private fun transcriptOf(slice: List<Message>, withImages: Boolean): OllamaChatMessage {
+        val parts = slice.map { it.toChatMessage(withImages) }
+        val text = parts.joinToString("\n\n") { m ->
+            val who = when (m.role) {
+                "user" -> "Utilisateur"
+                "assistant" -> "Assistant"
+                else -> "Contexte"
+            }
+            "[$who]\n${m.content}"
+        }
+        return OllamaChatMessage(role = "user", content = "Conversation à résumer :\n\n$text", images = parts.flatMap { it.images })
     }
 
     /** What one image costs in a request: a short note instead, for a model known to be blind. */

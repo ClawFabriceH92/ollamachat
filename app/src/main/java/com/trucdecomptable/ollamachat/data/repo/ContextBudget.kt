@@ -236,6 +236,12 @@ object ContextBudget {
         toSummarize: List<Message>,
         budget: Int,
         imageTokens: Int = IMAGE_TOKENS,
+        /**
+         * The budget before any narrowing. Only a message that could not fit
+         * even in it is cut: one that fits a normal request waits for the
+         * next, rather than being hidden with only its beginning summarised.
+         */
+        fullBudget: Int = budget,
     ): List<Message> {
         val slice = mutableListOf<Message>()
         var left = budget
@@ -245,7 +251,10 @@ object ContextBudget {
                 slice += m
                 left -= cost
             } else {
-                if (slice.all { isSummary(it) }) slice += cut(m, left)
+                val fullLeft = fullBudget - (budget - left)
+                // Never a summary: a cut summary, summarised again, is the
+                // loss compaction is meant to avoid.
+                if (slice.all { isSummary(it) } && !isSummary(m) && cost > fullLeft) slice += cut(m, left)
                 break
             }
         }

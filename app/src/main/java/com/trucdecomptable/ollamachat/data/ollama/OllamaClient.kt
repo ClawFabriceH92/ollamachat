@@ -114,17 +114,17 @@ open class OllamaClient(
      * True when anything at all answers at [target], an HTTP error included;
      * null when Stop interrupted the check. Registered as the active call, so
      * Stop reaches it like the answer it stands for, and kept short.
+     *
+     * Stop is recognised by the call having been taken out of the register,
+     * not by isCanceled(): an expired call timeout cancels the call as well,
+     * and a dead tunnel, the very thing checked for, read as a Stop.
      */
     private suspend fun answers(target: String): Boolean? = withContext(Dispatchers.IO) {
         val req = Request.Builder().url("$target/api/version").get().build()
         val check = http.newBuilder().callTimeout(5, TimeUnit.SECONDS).build().newCall(req)
         activeCall.set(check)
-        try {
-            val answered = runCatching { check.execute().use { true } }.getOrDefault(false)
-            if (check.isCanceled()) null else answered
-        } finally {
-            activeCall.compareAndSet(check, null)
-        }
+        val answered = runCatching { check.execute().use { true } }.getOrDefault(false)
+        if (activeCall.compareAndSet(check, null)) answered else null
     }
 
     /** List models installed on the server. */

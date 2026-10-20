@@ -187,6 +187,24 @@ class ContextBudgetTest {
     }
 
     @Test
+    fun `a narrowed request waits for a message instead of cutting it`() {
+        val message = message("m".repeat(7_500)) // 2 504 tokens
+        // Half the budget after a full window: it fitted the normal request,
+        // so it is not hidden with only its beginning summarised.
+        assertTrue(ContextBudget.sliceToSummarize(listOf(message), 2_000, fullBudget = 4_000).isEmpty())
+        // Larger than even the normal request: it could never fit, so it is cut.
+        val huge = message("h".repeat(30_000))
+        assertTrue(ContextBudget.sliceToSummarize(listOf(huge), 2_000, fullBudget = 4_000).single().content
+            .endsWith(ContextBudget.TRUNCATED_MARK))
+    }
+
+    @Test
+    fun `a summary is never cut to be summarised again`() {
+        val summary = message(ContextBudget.SUMMARY_HEADER + "s".repeat(9_000), role = "system")
+        assertTrue(ContextBudget.sliceToSummarize(listOf(summary, message("q")), 1_000).isEmpty())
+    }
+
+    @Test
     fun `the summary window leaves room for the summary`() {
         val instruction = "Résume."
         val budget = ContextBudget.summaryInputBudget(8192, 1024, instruction)

@@ -199,4 +199,19 @@ class ChatStreamWireTest {
 
         assertEquals(ChatErrorCode.CONNECT_TIMEOUT, result.error?.code)
     }
+
+    @Test
+    fun `a check that times out is a dead network, not a stop`() = runBlocking {
+        // Both the answer and the check meet silence: the check's own time
+        // limit cancels it, which must not read as the owner pressing Stop.
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val client = OllamaClient(
+            streamHttp = OllamaClient.streamClientBuilder().readTimeout(1, TimeUnit.SECONDS).build(),
+        )
+        val result = client.chatStream(url(), "qwen3", question)
+
+        assertFalse(result.cancelled)
+        assertEquals(ChatErrorCode.CONNECT_TIMEOUT, result.error?.code)
+    }
 }

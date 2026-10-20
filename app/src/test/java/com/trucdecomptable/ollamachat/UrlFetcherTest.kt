@@ -98,6 +98,17 @@ class UrlFetcherTest {
     }
 
     @Test
+    fun `shorthand ipv4 forms are checked like any address`() = runBlocking {
+        // OkHttp takes digits and dots for an address and parses "127.1" or
+        // "2130706433" as 127.0.0.1: nothing may reach the LAN through them.
+        listOf("127.1", "2130706433").forEach { host ->
+            val result = UrlFetcher.fetch("http://$host:${server.port}/")
+            assertTrue(host, result.isFailure)
+        }
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
     fun `a typed public name that resolves into the lan is refused before connecting`() = runBlocking {
         // A link pasted from a mail: typed by the owner, but its name is the
         // sender's, and its DNS can answer a LAN address on any lookup.

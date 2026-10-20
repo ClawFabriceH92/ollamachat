@@ -996,7 +996,7 @@ class ChatRepositoryTest {
     }
 
     @Test
-    fun `turbo is not unloaded from the settings while a conversation answers with it`() = runBlocking {
+    fun `turbo is not unloaded from the settings while the chat underneath answers with it`() = runBlocking {
         settings.setTurboModel("qwen3:8b")
         val id = db.conversationDao().insert(
             com.trucdecomptable.ollamachat.data.db.Conversation(title = "", model = "qwen3:8b")
@@ -1004,10 +1004,12 @@ class ChatRepositoryTest {
         val client = FakeClient(mutableListOf())
         val repo = repository(client)
 
+        repo.shownConversationId = id
         repo.releaseTurboModel(null)
-        assertTrue("déchargé sous une conversation qui s'en sert", client.warmUps.isEmpty())
+        assertTrue("déchargé sous la conversation qui s'en sert", client.warmUps.isEmpty())
 
-        db.conversationDao().deleteById(id)
+        // An old conversation with that model, not on screen, holds nothing.
+        repo.shownConversationId = null
         repo.releaseTurboModel(null)
         assertEquals(listOf("qwen3:8b" to "0"), client.warmUps.toList())
     }
