@@ -237,9 +237,15 @@ object ContextBudget {
         budget: Int,
         imageTokens: Int = IMAGE_TOKENS,
         /**
-         * The budget before any narrowing. Only a message that could not fit
-         * even in it is cut: one that fits a normal request waits for the
-         * next, rather than being hidden with only its beginning summarised.
+         * On the first narrowing after a full window: a message costing up to
+         * this goes whole and alone, rather than cut, since it may well fit
+         * without the ones that followed it. Narrowed further, it is cut.
+         */
+        wholeUpTo: Int = 0,
+        /**
+         * The budget before narrowing. A summary is cut only when it could not
+         * fit even in that: then it has to be shortened (num_ctx lowered since
+         * it was written), or compaction would stay blocked behind it.
          */
         fullBudget: Int = budget,
     ): List<Message> {
@@ -251,10 +257,16 @@ object ContextBudget {
                 slice += m
                 left -= cost
             } else {
-                val fullLeft = fullBudget - (budget - left)
-                // Never a summary: a cut summary, summarised again, is the
-                // loss compaction is meant to avoid.
-                if (slice.all { isSummary(it) } && !isSummary(m) && cost > fullLeft) slice += cut(m, left)
+                if (slice.all { isSummary(it) }) {
+                    val used = budget - left
+                    when {
+                        !isSummary(m) -> slice += if (cost <= wholeUpTo - used) m else cut(m, left)
+                        // A summary that merely does not fit a narrowed request
+                        // is left whole: cut, then summarised again, it would
+                        // lose what it stands for.
+                        slice.isEmpty() && cost > fullBudget -> slice += cut(m, left)
+                    }
+                }
                 break
             }
         }

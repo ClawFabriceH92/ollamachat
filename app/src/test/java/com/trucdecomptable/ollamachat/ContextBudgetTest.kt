@@ -187,21 +187,33 @@ class ContextBudgetTest {
     }
 
     @Test
-    fun `a narrowed request waits for a message instead of cutting it`() {
+    fun `on the first narrowing a message that fits a normal request goes whole and alone`() {
         val message = message("m".repeat(7_500)) // 2 504 tokens
-        // Half the budget after a full window: it fitted the normal request,
-        // so it is not hidden with only its beginning summarised.
-        assertTrue(ContextBudget.sliceToSummarize(listOf(message), 2_000, fullBudget = 4_000).isEmpty())
-        // Larger than even the normal request: it could never fit, so it is cut.
+        val next = message("n".repeat(300))
+        // Half the budget after a full window: it may fit without what followed.
+        assertEquals(listOf(message), ContextBudget.sliceToSummarize(listOf(message, next), 2_000, wholeUpTo = 4_000))
+        // Narrowed again, it is cut, or compaction would never move.
+        assertTrue(
+            ContextBudget.sliceToSummarize(listOf(message), 1_000).single().content.endsWith(ContextBudget.TRUNCATED_MARK)
+        )
+        // Larger than even the normal request: cut at once.
         val huge = message("h".repeat(30_000))
-        assertTrue(ContextBudget.sliceToSummarize(listOf(huge), 2_000, fullBudget = 4_000).single().content
-            .endsWith(ContextBudget.TRUNCATED_MARK))
+        assertTrue(
+            ContextBudget.sliceToSummarize(listOf(huge), 2_000, wholeUpTo = 4_000).single().content
+                .endsWith(ContextBudget.TRUNCATED_MARK)
+        )
     }
 
     @Test
-    fun `a summary is never cut to be summarised again`() {
-        val summary = message(ContextBudget.SUMMARY_HEADER + "s".repeat(9_000), role = "system")
-        assertTrue(ContextBudget.sliceToSummarize(listOf(summary, message("q")), 1_000).isEmpty())
+    fun `a summary is cut only when it could not fit even a normal request`() {
+        val summary = message(ContextBudget.SUMMARY_HEADER + "s".repeat(9_000), role = "system") // about 3 030 tokens
+        // Merely over a narrowed request: left whole.
+        assertTrue(ContextBudget.sliceToSummarize(listOf(summary, message("q")), 1_000, fullBudget = 4_000).isEmpty())
+        // Over the normal request too (num_ctx lowered since): shortened.
+        assertTrue(
+            ContextBudget.sliceToSummarize(listOf(summary), 1_000, fullBudget = 1_000).single().content
+                .endsWith(ContextBudget.TRUNCATED_MARK)
+        )
     }
 
     @Test

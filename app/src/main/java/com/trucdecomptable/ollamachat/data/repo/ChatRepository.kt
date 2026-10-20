@@ -867,8 +867,16 @@ class ChatRepository(
         // short for this content, and the same slice would fail the same way.
         val shrink = compactionShrink[conversationId] ?: 1
         val inputBudget = ContextBudget.summaryInputBudget(numCtx, predict, instruction)
-        val slice = ContextBudget.sliceToSummarize(plan.summarize, inputBudget / shrink, imageTokens, inputBudget)
-        if (slice.all { ContextBudget.isSummary(it) }) {
+        val slice = ContextBudget.sliceToSummarize(
+            plan.summarize,
+            inputBudget / shrink,
+            imageTokens,
+            wholeUpTo = if (shrink == 2) inputBudget else 0,
+            fullBudget = inputBudget,
+        )
+        // Only whole summaries: nothing new to fold. A cut summary is the
+        // exception, a shortening it needed.
+        if (slice.all { ContextBudget.isSummary(it) && !it.content.endsWith(ContextBudget.TRUNCATED_MARK) }) {
             // Nothing new fits this request: tried again later, not every
             // message, and at full size, since the narrowing is what kept the
             // next message out.
@@ -939,7 +947,9 @@ class ChatRepository(
                 "assistant" -> "Assistant"
                 else -> "Contexte"
             }
-            "[$who]\n${m.content}"
+            // Each image keeps its place: Ollama puts the image where it finds
+            // an [img] mark, and at the head of the message otherwise.
+            "[$who]\n" + "[img] ".repeat(m.images.size) + m.content
         }
         return OllamaChatMessage(role = "user", content = "Conversation à résumer :\n\n$text", images = parts.flatMap { it.images })
     }

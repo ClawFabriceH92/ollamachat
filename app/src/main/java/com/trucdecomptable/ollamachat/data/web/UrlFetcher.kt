@@ -111,7 +111,7 @@ object UrlFetcher {
         host.contains(':') || host.all { it.isDigit() || it == '.' }
 
     /** Sockets that will not connect into a private network, the last word before any packet leaves. */
-    private object PublicOnlySocketFactory : SocketFactory() {
+    internal object PublicOnlySocketFactory : SocketFactory() {
         override fun createSocket(): Socket = PublicOnlySocket()
         override fun createSocket(host: String, port: Int): Socket =
             PublicOnlySocket().apply { connect(InetSocketAddress(host, port)) }
@@ -314,7 +314,10 @@ object UrlFetcher {
                 .header("User-Agent", "OllamaChat/1.0 (Android)")
                 .get()
                 .build()
-            http.newCall(req).execute().use { resp ->
+            // Guarded like a direct read: the reader is chosen by nobody here,
+            // but its name still resolves through the local network's DNS,
+            // and a redirect from it is not followed.
+            guardedClient(privateHost = null).newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return null
                 val body = resp.body?.string() ?: return null
                 val marker = "Markdown Content:"
