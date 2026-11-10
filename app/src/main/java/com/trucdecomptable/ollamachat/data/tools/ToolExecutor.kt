@@ -21,7 +21,7 @@ object ToolExecutor {
     val nativeToolDefs: List<ToolDef> = listOf(
         ToolDef(
             name = "web_search",
-            description = "Recherche sur le web (actualités, informations à jour). Utilise Wikipedia si aucune clé Brave n'est configurée.",
+            description = "Recherche sur le web (actualités, informations à jour) via Bing, ou Brave si une clé API est configurée.",
             parametersJson = """{"type":"object","properties":{"query":{"type":"string","description":"La requête de recherche"}},"required":["query"]}""",
         ),
         ToolDef(

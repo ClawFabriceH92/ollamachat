@@ -98,3 +98,13 @@ Les deux jobs échouent si le nombre de tests exécutés tombe anormalement bas.
   commun avec la requete est desormais ecartee (PertinenceWiki, 5 tests).
 - Sans resultat pertinent, l'outil repond « Aucun resultat pertinent pour … » avec
   la source, et invite le modele a dire qu'il ne trouve rien au lieu d'inventer.
+
+## v1.7.2
+
+- Recherche web sans cle : Bing remplace Wikipedia comme moteur par defaut
+  (Brave si une cle est configuree). Google est inutilisable en HTTP nu :
+  pages rendues en JavaScript, 93 Ko pour zero resultat extractible. Qwant,
+  Mojeek et Ecosia repondent 403, DuckDuckGo une page anti-robot, Startpage un
+  defi JavaScript, les instances SearXNG publiques sont fermees. Bing rend ses
+  resultats dans le HTML (teste le 10/11/2026), avec le filtre de pertinence
+  conserve et Wikipedia en dernier recours.

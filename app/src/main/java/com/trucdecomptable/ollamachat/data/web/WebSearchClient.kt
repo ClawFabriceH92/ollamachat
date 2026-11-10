@@ -30,8 +30,17 @@ object WebSearchClient {
     suspend fun search(query: String, braveApiKey: String): Result<List<SearchItem>> =
         withContext(Dispatchers.IO) {
             try {
-                val results = if (braveApiKey.isNotBlank()) searchBrave(query, braveApiKey)
-                else searchWikipedia(query)
+                // Ordre : Brave si une clé est configurée, sinon BING (seul moteur
+                // qui laisse lire ses résultats sans clé), et Wikipédia en dernier
+                // recours pour les sujets encyclopédiques.
+                val results = when {
+                    braveApiKey.isNotBlank() -> searchBrave(query, braveApiKey)
+                    else -> {
+                        val bing = runCatching { BingSearch.rechercher(query) }.getOrElse { emptyList() }
+                        if (bing.isNotEmpty()) PertinenceWiki.pertinents(bing, query)
+                        else PertinenceWiki.pertinents(searchWikipedia(query), query)
+                    }
+                }
                 Result.success(results)
             } catch (e: Exception) {
                 Result.failure(e)
