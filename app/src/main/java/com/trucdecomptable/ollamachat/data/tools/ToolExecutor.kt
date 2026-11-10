@@ -67,7 +67,12 @@ object ToolExecutor {
                 val items = com.trucdecomptable.ollamachat.data.web.WebSearchClient.search(query, braveApiKey)
                     .getOrElse { return@withContext SearchOutcome("Erreur de recherche : ${it.message}") }
                 if (items.isEmpty()) {
-                    SearchOutcome("Aucun résultat pour « $query »")
+                    val source = if (braveApiKey.isNotBlank()) "Brave" else "Wikipédia"
+                    SearchOutcome(
+                        "Aucun résultat pertinent pour « $query » ($source). " +
+                            "Dis clairement que tu ne trouves pas d'information et " +
+                            "n'invente aucun résultat.",
+                    )
                 } else {
                     val shown = items.take(5)
                     SearchOutcome(

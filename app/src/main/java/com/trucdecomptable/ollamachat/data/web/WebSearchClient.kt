@@ -76,7 +76,7 @@ object WebSearchClient {
             if (!resp.isSuccessful) throw IllegalStateException("Wikipedia HTTP ${resp.code}")
             val json = JSONObject(resp.body?.string() ?: "{}")
             val arr = json.optJSONObject("query")?.optJSONArray("search") ?: JSONArray()
-            return (0 until arr.length()).map { i ->
+            val trouves = (0 until arr.length()).map { i ->
                 val item = arr.getJSONObject(i)
                 val title = item.optString("title", "")
                 SearchItem(
@@ -88,6 +88,11 @@ object WebSearchClient {
                         .replace("&quot;", "\""),
                 )
             }
+            // Wikipédia rend toujours « les pages les plus proches » : sur un nom
+            // absent de l'encyclopédie il renvoie n'importe quoi (chercher
+            // « Fabrice Heuvrard » donne « Xylophone »). Sans ce filtre, le
+            // modèle présente cette bouillie comme la réponse à la question.
+            return PertinenceWiki.pertinents(trouves, query)
         }
     }
 }

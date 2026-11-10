@@ -88,3 +88,13 @@ Sur chaque branche et chaque PR :
 
 Les deux jobs échouent si le nombre de tests exécutés tombe anormalement bas. Un push sur
 `main` publie la release « latest » et supprime les APK périmés.
+
+## v1.7.1
+
+- Recherche web : les resultats Wikipedia sont filtres par pertinence. Wikipedia
+  ne dit jamais « je ne connais pas » : sur un nom absent de l'encyclopedie il
+  rend les pages les plus proches (« Fabrice Heuvrard » donnait « Xylophone »),
+  et le modele presentait ces resultats comme la reponse. Une page sans mot en
+  commun avec la requete est desormais ecartee (PertinenceWiki, 5 tests).
+- Sans resultat pertinent, l'outil repond « Aucun resultat pertinent pour … » avec
+  la source, et invite le modele a dire qu'il ne trouve rien au lieu d'inventer.
